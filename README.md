@@ -3,8 +3,10 @@
 Companion code for the paper:
 
 > **Finite-POMDP Abstraction via Agent-Bounded Indistinguishability: A Bounded-Interaction Myhill-Nerode Theorem**
+>
 > Anthony T Nixon
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18904640.svg)](https://doi.org/10.5281/zenodo.18904640)
+>
+>[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18904640.svg)](https://doi.org/10.5281/zenodo.18904640)
 
 ## Overview
 
