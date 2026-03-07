@@ -1,0 +1,9 @@
+benchmark,method,horizon,segment_horizon,num_layers,epsilon,m,policy_count,total_histories,class_count,runtime_s,complexity_proxy,layered_speedup_vs_direct,layered_complexity_reduction
+tiger_full_actions,direct,4.0,4.0,1.0,0.5,1.0,3.0,31.0,9.0,0.12890206603333354,2976.0,1.0,1.0
+tiger_full_actions,layered,4.0,4.0,1.0,0.5,1.0,3.0,31.0,,0.10399989399593323,2976.0,1.2394442059563453,1.0
+tiger_full_actions,direct,6.0,4.0,2.0,0.5,1.0,3.0,127.0,14.0,1.8794983309926465,18288.0,1.0,1.0
+tiger_full_actions,layered,6.0,4.0,2.0,0.5,1.0,3.0,38.0,,0.0975531100993976,3312.0,19.26641117928082,5.521739130434782
+tiger_full_actions,direct,8.0,4.0,2.0,0.5,1.0,3.0,511.0,21.0,33.7900439449586,98112.0,1.0,1.0
+tiger_full_actions,layered,8.0,4.0,2.0,0.5,1.0,3.0,62.0,,0.19011581095401198,5952.0,177.734002108495,16.483870967741936
+tiger_full_actions,direct,10.0,5.0,2.0,0.5,1.0,3.0,2047.0,28.0,500.3457223291043,491280.0,1.0,1.0
+tiger_full_actions,layered,10.0,5.0,2.0,0.5,1.0,3.0,126.0,,0.8043260819977149,15120.0,622.0682550619138,32.492063492063494

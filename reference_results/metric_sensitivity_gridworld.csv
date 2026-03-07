@@ -1,0 +1,8 @@
+benchmark,horizon,m,epsilon,class_count_w1_geometric,class_count_tv_equivalent,delta_tv_minus_w1
+gridworld_3x3,2.0,1.0,0.0,6.0,6.0,0.0
+gridworld_3x3,2.0,1.0,0.1,6.0,6.0,0.0
+gridworld_3x3,2.0,1.0,0.2,5.0,6.0,1.0
+gridworld_3x3,2.0,1.0,0.3,4.0,6.0,2.0
+gridworld_3x3,2.0,1.0,0.4,3.0,4.0,1.0
+gridworld_3x3,2.0,1.0,0.5,3.0,3.0,0.0
+gridworld_3x3,2.0,1.0,0.6,3.0,3.0,0.0

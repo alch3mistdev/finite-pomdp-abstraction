@@ -1,0 +1,2 @@
+profile,eps_grid,ms,horizons,include_nonlipschitz,include_hierarchical_scaling,stochastic_samples,seed,max_horizon,segment_horizon,parallel,workers
+quick,"0.0,0.1,0.2,0.3,0.4,0.5,0.6","1,2","2,3,4",True,True,200,7,10,,True,16

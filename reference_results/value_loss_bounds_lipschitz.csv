@@ -1,0 +1,15 @@
+benchmark,reward_track,horizon,m,epsilon,class_count,empirical_value_error,d_m_t_w1,theorem_4_4_style_bound,canonical_quotient_bound,L_R,reward_range,theorem_bound_vacuous,canonical_bound_vacuous,bound_applicable
+tiger_full_actions,synthetic_lipschitz,2,1.0,0.0,4.0,5.551115123125783e-17,0.0,0.0,0.0,1.0,1.0,False,False,True
+tiger_full_actions,synthetic_lipschitz,2,1.0,0.1,4.0,5.551115123125783e-17,0.0,0.0,3.4000000000000004,1.0,1.0,False,True,True
+tiger_full_actions,synthetic_lipschitz,2,1.0,0.2,4.0,5.551115123125783e-17,0.0,0.0,6.800000000000001,1.0,1.0,False,True,True
+tiger_full_actions,synthetic_lipschitz,2,1.0,0.3,4.0,5.551115123125783e-17,0.0,0.0,10.2,1.0,1.0,False,True,True
+tiger_full_actions,synthetic_lipschitz,2,1.0,0.4,4.0,5.551115123125783e-17,0.0,0.0,13.600000000000001,1.0,1.0,False,True,True
+tiger_full_actions,synthetic_lipschitz,2,1.0,0.5,3.0,0.12249999999999994,0.24499999999999994,0.4899999999999999,17.0,1.0,1.0,False,True,True
+tiger_full_actions,synthetic_lipschitz,2,1.0,0.6,3.0,0.12249999999999994,0.24499999999999994,0.4899999999999999,20.4,1.0,1.0,False,True,True
+tiger_full_actions,standard_reward,2,1.0,0.0,4.0,0.0,0.0,0.0,0.0,110.0,110.0,False,False,True
+tiger_full_actions,standard_reward,2,1.0,0.1,4.0,0.0,0.0,0.0,374.0,110.0,110.0,False,True,True
+tiger_full_actions,standard_reward,2,1.0,0.2,4.0,0.0,0.0,0.0,748.0,110.0,110.0,False,True,True
+tiger_full_actions,standard_reward,2,1.0,0.3,4.0,0.0,0.0,0.0,1122.0,110.0,110.0,False,True,True
+tiger_full_actions,standard_reward,2,1.0,0.4,4.0,0.0,0.0,0.0,1496.0,110.0,110.0,False,True,True
+tiger_full_actions,standard_reward,2,1.0,0.5,3.0,0.0,0.24499999999999994,53.899999999999984,1870.0,110.0,110.0,False,True,True
+tiger_full_actions,standard_reward,2,1.0,0.6,3.0,0.0,0.24499999999999994,53.899999999999984,2244.0,110.0,110.0,False,True,True

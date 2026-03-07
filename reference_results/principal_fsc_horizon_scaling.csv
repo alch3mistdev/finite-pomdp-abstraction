@@ -1,0 +1,8 @@
+benchmark,method,horizon,epsilon,m,policy_count,k_selected,ari_vs_full,class_count,runtime_s,speedup_vs_full,ari_target,calibration_horizon
+tiger_full_actions,calibration,6.0,0.5,2.0,147.0,10.0,0.999055456987759,30.0,102.31204956490546,,0.999,6.0
+tiger_full_actions,full_exact,4.0,0.5,2.0,147.0,147.0,1.0,10.0,4.870625937008299,1.0,0.999,6.0
+tiger_full_actions,full_exact,5.0,0.5,2.0,147.0,147.0,1.0,16.0,20.47549252898898,1.0,0.999,6.0
+tiger_full_actions,full_exact,6.0,0.5,2.0,147.0,147.0,1.0,30.0,86.9533558510011,1.0,0.999,6.0
+tiger_full_actions,full_exact,7.0,0.5,2.0,147.0,147.0,1.0,50.0,361.6130927699851,1.0,0.999,6.0
+tiger_full_actions,principal_subset,7.0,0.5,2.0,10.0,10.0,0.9996893815001069,50.0,23.410161560983397,15.446843108194026,0.999,6.0
+tiger_full_actions,principal_subset,8.0,0.5,2.0,10.0,10.0,,77.0,95.59431763901375,,0.999,6.0

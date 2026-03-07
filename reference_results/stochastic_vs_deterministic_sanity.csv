@@ -1,0 +1,2 @@
+benchmark,horizon,m,history_pair,deterministic_policy_count,stochastic_samples,max_distance_deterministic,max_distance_stochastic_sample,det_minus_stoch_gap,stochastic_exceeds_deterministic
+tiger_full_actions,2.0,2.0,L_vs_R_at_t1,147.0,200.0,0.48999999999999994,0.31319732497830416,0.17680267502169578,False

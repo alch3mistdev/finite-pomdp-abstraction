@@ -1,0 +1,19 @@
+## Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+## Testing
+.pytest_cache/
+
+## Virtual environments
+.venv/
+venv/
+
+## OS
+.DS_Store
+
+## Generated results (reproduce with run_basic_results.py)
+experiments/results/

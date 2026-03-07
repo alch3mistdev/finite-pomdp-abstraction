@@ -1,0 +1,9 @@
+check,benchmark,horizon,value_lhs,value_rhs,bound_holds,details
+single_layer_reduction,synthetic,1.0,0.123,0.123,True,L=1 layer reduces to base distortion
+wrapper_stack_deterministic,gridworld_3x3,2.0,0.027600000000000027,0.04470000000000004,True,"D(W1(M),W1(N)) <= L1 * D(M,N)"
+wrapper_stack_stochastic,gridworld_3x3,2.0,0.033119999999999844,0.03312000000000003,True,"D(W2(W1(M)),W2(W1(N))) <= L2 * D(W1(M),W1(N))"
+wrapper_stack_composed,gridworld_3x3,2.0,0.033119999999999844,0.05364000000000004,True,Composed contraction: D(final) <= (L2*L1) * D(base)
+small_horizon_equivalence,tiger_full_actions,4.0,9.0,9.0,True,tau=T single-layer reduction matches monolithic partition
+long_horizon_theorem_bound,tiger_full_actions,8.0,0.023581600614594994,1.5654682658794534,True,"empirical<=L_R*T*D (L_R=1 synthetic score), eps=0.5"
+long_horizon_theorem_bound,tiger_full_actions,10.0,0.017164076525741617,2.2235135805898794,True,"empirical<=L_R*T*D (L_R=1 synthetic score), eps=0.5"
+composed_distortion_accounting,gridworld_3x3,7.0,2.1,2.1,True,compose_layered_distortion monotone under L<=1 stack
