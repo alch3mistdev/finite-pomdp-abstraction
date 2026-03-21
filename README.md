@@ -194,6 +194,22 @@ run_basic_results.py       CLI entrypoint
 
 The `reference_results/` directory contains the exact CSV data and PNG figures used in the paper, generated with `--profile extended --seed 7`. You can compare your generated results against these to verify reproducibility.
 
+## Versioning
+
+This repository tracks the paper's manuscript versions via git tags. If you arrived here from a specific paper version, check out the matching tag to get the exact code that accompanied that revision:
+
+| Tag | Paper version | Notes |
+|-----|---------------|-------|
+| [`v0.1.0`](../../tree/v0.1.0) | Initial preprint | Core experiments and reference results |
+| [`v0.1.1`](../../tree/v0.1.1) | Revised preprint | Three-tier reproduction contract, clock-aware theory tables, Tier III artifacts |
+
+```bash
+# Check out the code matching a specific paper version
+git checkout v0.1.0
+```
+
+The `main` branch always tracks the latest release.
+
 ## Citation
 
 If you use this software, please cite it as described in [CITATION.cff](CITATION.cff).
