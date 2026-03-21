@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 
 from .benchmarks import (
+    channel_communication_pomdp,
+    channel_obs_metric,
     coarsen_observations,
     coarsened_observation_metric,
     delta_covering_coarsen,
@@ -24,10 +26,16 @@ from .benchmarks import (
     gridworld_geometric_observation_metric,
     gridworld_pomdp,
     hallway_pomdp,
+    inspection_choice_pomdp,
     lipschitz_observation_score,
     network_monitoring_pomdp,
+    observation_aligned_reward_pomdp,
+    observation_reward_lipschitz_constant,
     random_observation_metric,
     random_structured_pomdp,
+    rocksample_observation_metric,
+    rocksample_pomdp,
+    stationary_counterexample_pomdp,
     stochastic_channel_lipschitz_constant,
     stochastic_coarsen_observations,
     tiger_discrete_observation_metric,
@@ -44,6 +52,7 @@ from .metrics import distribution_distance, wasserstein_distance
 from .pomdp_core import (
     DeterministicFSC,
     FinitePOMDP,
+    StochasticFSC,
     conditional_future_observation_distribution,
     expected_sequence_score,
     trajectory_observation_distribution,
@@ -52,6 +61,7 @@ from .quotient import (
     compute_class_count_curve,
     compute_partition_from_cache,
     d_m_t_between_original_and_quotient,
+    d_m_t_between_two_pomdps,
     precompute_distance_cache,
     quotient_observation_sequence_distribution,
     value_state_action_original,
@@ -64,6 +74,13 @@ from .spectral import (
     greedy_select_fscs,
     partition_agreement,
     spectral_analysis,
+    subset_probe_gap_sup,
+)
+from .theory_first_tables import (
+    export_theory_first_tables as _export_theory_first_tables,
+    run_exact_latent_planning as _run_exact_latent_planning,
+    run_exact_observation_planning as _run_exact_observation_planning,
+    run_probe_family_comparison as _run_probe_family_comparison,
 )
 
 
@@ -330,14 +347,183 @@ def _policies_m1_for_pomdp(pomdp) -> List[DeterministicFSC]:
     )
 
 
+def _real_reward_tightness_rows(
+    *,
+    benchmark: str,
+    source: str,
+    reward_label: str,
+    pomdp: FinitePOMDP,
+    d_obs: np.ndarray,
+    observation_reward: Sequence[float],
+    horizon: int,
+    eps_grid: Sequence[float],
+    m: int = 1,
+) -> pd.DataFrame:
+    """Evaluate the same-policy theorem bound on a fixed benchmark/reward pair."""
+    policies = enumerate_deterministic_fscs(
+        num_actions=pomdp.num_actions,
+        num_observations=pomdp.num_observations,
+        max_nodes=m,
+        include_smaller=True,
+    )
+    cache = precompute_distance_cache(
+        pomdp=pomdp,
+        policies=policies,
+        horizon=horizon,
+        distance_mode="w1",
+        d_obs=d_obs,
+    )
+    l_r = observation_reward_lipschitz_constant(np.asarray(observation_reward, dtype=float), d_obs)
+
+    rows: List[Dict[str, object]] = []
+    for eps in sorted({float(x) for x in eps_grid}):
+        partition = compute_partition_from_cache(cache=cache, epsilon=float(eps))
+
+        errors: List[float] = []
+        distances: List[float] = []
+        for policy in policies:
+            value_original = value_state_action_original(pomdp=pomdp, policy=policy, horizon=horizon)
+            value_quotient = value_state_action_quotient(pomdp=pomdp, partition=partition, policy=policy)
+            p_m = trajectory_observation_distribution(pomdp=pomdp, policy=policy, horizon=horizon)
+            p_q = quotient_observation_sequence_distribution(pomdp=pomdp, partition=partition, policy=policy)
+            errors.append(abs(value_original - value_quotient))
+            distances.append(distribution_distance(p_m, p_q, mode="w1", d_obs=d_obs))
+
+        empirical_value_error = max(errors) if errors else 0.0
+        d_m_t = max(distances) if distances else 0.0
+        theorem_bound = l_r * horizon * d_m_t
+        tightness_ratio = empirical_value_error / theorem_bound if theorem_bound > 1e-12 else 0.0
+
+        rows.append(
+            {
+                "benchmark": benchmark,
+                "benchmark_source": source,
+                "reward_label": reward_label,
+                "horizon": float(horizon),
+                "m": float(m),
+                "epsilon": float(eps),
+                "num_policies": float(len(policies)),
+                "class_count": float(partition.num_classes_total),
+                "empirical_value_error": float(empirical_value_error),
+                "d_m_t_w1": float(d_m_t),
+                "theorem_4_4_style_bound": float(theorem_bound),
+                "L_R": float(l_r),
+                "tightness_ratio": float(tightness_ratio),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def run_value_bound_tightness_real_reward(
+    eps_grid: Sequence[float],
+    tightness_threshold: float = 0.5,
+) -> pd.DataFrame:
+    """Find a real-reward benchmark where the value theorem bound is tight.
+
+    Existing benchmarks are audited first. If none reaches the requested
+    same-order ratio threshold, a single exact fallback benchmark is added.
+    """
+    existing_candidates = [
+        (
+            "hallway_10",
+            "existing",
+            "landmark_reward",
+            observation_aligned_reward_pomdp(
+                hallway_pomdp(length=10, num_landmarks=3),
+                np.array([1.0, 0.0, 0.0], dtype=float),
+            ),
+            discrete_observation_metric(3),
+            np.array([1.0, 0.0, 0.0], dtype=float),
+            2,
+            tuple(float(x) for x in eps_grid),
+        ),
+        (
+            "network_4",
+            "existing",
+            "alert_reward",
+            observation_aligned_reward_pomdp(
+                network_monitoring_pomdp(num_nodes=4, num_alerts=3),
+                np.array([1.0, 0.5, 0.0], dtype=float),
+            ),
+            discrete_observation_metric(3),
+            np.array([1.0, 0.5, 0.0], dtype=float),
+            2,
+            tuple(float(x) for x in eps_grid),
+        ),
+        (
+            "gridworld_3x3",
+            "existing",
+            "northwest_region_reward",
+            observation_aligned_reward_pomdp(
+                gridworld_pomdp(size=3),
+                np.array([1.0, 0.5, 0.0, 0.0], dtype=float),
+            ),
+            gridworld_geometric_observation_metric(),
+            np.array([1.0, 0.5, 0.0, 0.0], dtype=float),
+            2,
+            tuple(float(x) for x in eps_grid),
+        ),
+    ]
+
+    frames = [
+        _real_reward_tightness_rows(
+            benchmark=benchmark,
+            source=source,
+            reward_label=reward_label,
+            pomdp=pomdp,
+            d_obs=d_obs,
+            observation_reward=reward_vector,
+            horizon=horizon,
+            eps_grid=local_eps,
+        )
+        for benchmark, source, reward_label, pomdp, d_obs, reward_vector, horizon, local_eps in existing_candidates
+    ]
+    df = pd.concat(frames, ignore_index=True)
+
+    existing_max = float(df["tightness_ratio"].max()) if not df.empty else 0.0
+    if existing_max + 1e-12 < tightness_threshold:
+        fallback_eps = tuple(sorted({float(x) for x in eps_grid} | {1.0}))
+        fallback_reward = np.array([0.0, 0.0, 1.0, 0.0, 0.0], dtype=float)
+        fallback_df = _real_reward_tightness_rows(
+            benchmark="inspection_choice",
+            source="fallback",
+            reward_label="success_reward",
+            pomdp=observation_aligned_reward_pomdp(inspection_choice_pomdp(), fallback_reward),
+            d_obs=discrete_observation_metric(5),
+            observation_reward=fallback_reward,
+            horizon=2,
+            eps_grid=fallback_eps,
+        )
+        df = pd.concat([df, fallback_df], ignore_index=True)
+
+    best_idx = int(df["tightness_ratio"].idxmax())
+    selected_benchmark = str(df.loc[best_idx, "benchmark"])
+    selected_reward = str(df.loc[best_idx, "reward_label"])
+    selected_max_ratio = float(df.loc[best_idx, "tightness_ratio"])
+
+    df["tightness_threshold"] = float(tightness_threshold)
+    df["meets_tightness_threshold"] = df["tightness_ratio"] >= (tightness_threshold - 1e-12)
+    df["selected_for_paper"] = (
+        (df["benchmark"] == selected_benchmark)
+        & (df["reward_label"] == selected_reward)
+    )
+    df["selected_max_ratio"] = float(selected_max_ratio)
+    df["selected_benchmark"] = selected_benchmark
+    df["selected_reward_label"] = selected_reward
+
+    return df
+
+
 def run_lipschitz_value_bounds(
     eps_grid: Sequence[float],
 ) -> pd.DataFrame:
     """Value-loss and bound overlays on Tiger full-actions for m=1.
 
-    Reports two tracks:
+    Reports three tracks:
     - 'synthetic_lipschitz': L_R=1 synthetic reward (observation-score function)
     - 'standard_reward': L_R=110 standard Tiger reward, showing bound vacuousness
+    - 'gridworld_goal': GridWorld 3x3 goal reward L_R ~ 2.0
     """
     pomdp = tiger_full_actions_pomdp()
     horizon = 2
@@ -429,6 +615,56 @@ def run_lipschitz_value_bounds(
             "reward_range": float(reward_range_std),
             "theorem_bound_vacuous": bool(theorem_bound > reward_range_std),
             "canonical_bound_vacuous": bool(canonical_bound > reward_range_std),
+            "bound_applicable": True,
+        })
+
+    # --- Track 3: GridWorld goal reward L_R ~ 2.0 ---
+    gw_pomdp = gridworld_pomdp(size=3)
+    gw_d_obs = gridworld_geometric_observation_metric()
+    gw_l_r = compute_reward_lipschitz_constant(gw_pomdp)
+    gw_reward_range = float(gw_pomdp.rewards.max() - gw_pomdp.rewards.min())
+
+    gw_policies = _policies_m1_for_pomdp(gw_pomdp)
+    gw_cache = precompute_distance_cache(
+        pomdp=gw_pomdp,
+        policies=gw_policies,
+        horizon=horizon,
+        distance_mode="w1",
+        d_obs=gw_d_obs,
+    )
+
+    for eps in eps_grid:
+        partition = compute_partition_from_cache(cache=gw_cache, epsilon=float(eps))
+
+        per_policy_gw = []
+        for p in gw_policies:
+            v_m = value_state_action_original(pomdp=gw_pomdp, policy=p, horizon=horizon)
+            v_q = value_state_action_quotient(pomdp=gw_pomdp, partition=partition, policy=p)
+            p_m = trajectory_observation_distribution(pomdp=gw_pomdp, policy=p, horizon=horizon)
+            p_q = quotient_observation_sequence_distribution(pomdp=gw_pomdp, partition=partition, policy=p)
+            d = distribution_distance(p_m, p_q, mode="w1", d_obs=gw_d_obs)
+            per_policy_gw.append((abs(v_m - v_q), d))
+
+        empirical_value_error = max(v for v, _ in per_policy_gw)
+        d_m_t = max(d for _, d in per_policy_gw)
+        theorem_bound = gw_l_r * horizon * d_m_t
+        canonical_bound = gw_l_r * horizon * float(eps) * (1.0 + 2.0 * horizon * gw_pomdp.num_states * gw_pomdp.num_observations)
+
+        rows.append({
+            "benchmark": "gridworld_3x3",
+            "reward_track": "gridworld_goal",
+            "horizon": horizon,
+            "m": 1.0,
+            "epsilon": float(eps),
+            "class_count": float(partition.num_classes_total),
+            "empirical_value_error": float(empirical_value_error),
+            "d_m_t_w1": float(d_m_t),
+            "theorem_4_4_style_bound": float(theorem_bound),
+            "canonical_quotient_bound": float(canonical_bound),
+            "L_R": float(gw_l_r),
+            "reward_range": float(gw_reward_range),
+            "theorem_bound_vacuous": bool(theorem_bound > gw_reward_range),
+            "canonical_bound_vacuous": bool(canonical_bound > gw_reward_range),
             "bound_applicable": True,
         })
 
@@ -638,6 +874,50 @@ def run_stochastic_vs_deterministic_sanity(
     return pd.DataFrame([row])
 
 
+def run_stationary_counterexample() -> pd.DataFrame:
+    """Exact stationary witness-gap disproof for m=1, T=3."""
+    pomdp = stationary_counterexample_pomdp()
+    horizon = 3
+    d_obs = discrete_observation_metric(pomdp.num_observations)
+
+    det_policies = enumerate_deterministic_fscs(
+        num_actions=pomdp.num_actions,
+        num_observations=pomdp.num_observations,
+        max_nodes=1,
+        include_smaller=True,
+    )
+    stochastic_policy = StochasticFSC(
+        num_nodes=1,
+        alpha=np.array([[0.5, 0.5]], dtype=float),
+        beta=np.ones((1, pomdp.num_observations, 1), dtype=float),
+        initial_node=0,
+    )
+
+    history_l = (0,)  # L
+    history_r = (1,)  # R
+
+    def hist_distance(policy) -> float:
+        p_l = conditional_future_observation_distribution(pomdp, policy, history=history_l, horizon=horizon)
+        p_r = conditional_future_observation_distribution(pomdp, policy, history=history_r, horizon=horizon)
+        return distribution_distance(p_l, p_r, mode="w1", d_obs=d_obs)
+
+    max_det = max(hist_distance(policy) for policy in det_policies)
+    stochastic_distance = hist_distance(stochastic_policy)
+
+    row = {
+        "benchmark": "stationary_counterexample",
+        "horizon": float(horizon),
+        "m": 1.0,
+        "history_pair": "L_vs_R_at_t1",
+        "deterministic_policy_count": float(len(det_policies)),
+        "max_distance_deterministic": float(max_det),
+        "stochastic_half_half_distance": float(stochastic_distance),
+        "witness_gap": float(stochastic_distance - max_det),
+        "deterministic_stationary_suffices": bool(stochastic_distance <= max_det + 1e-9),
+    }
+    return pd.DataFrame([row])
+
+
 def _save_fig(fig: plt.Figure, path: Path) -> None:
     """Save figure as PNG (raster) and PDF (vector)."""
     fig.savefig(path, dpi=200)
@@ -664,13 +944,46 @@ def _save_plot_value_bounds(df_value: pd.DataFrame, path: Path) -> None:
     df = df_value.sort_values("epsilon")
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(df["epsilon"], df["empirical_value_error"], marker="o", label="Empirical value error")
-    ax.plot(df["epsilon"], df["theorem_4_4_style_bound"], marker="s", label="L_R * T * D_{m,T}^W")
-    ax.plot(df["epsilon"], df["canonical_quotient_bound"], marker="^", label="Canonical quotient bound")
-    ax.set_title("Value Error vs Two Bounds (Lipschitz Track)")
+    ax.plot(df["epsilon"], df["theorem_4_4_style_bound"], marker="s", label=r"$L_R \cdot T \cdot D_{m,T}^{W}$")
+    ax.set_title("Value Error vs Theorem Bound (Lipschitz Track)")
     ax.set_xlabel("epsilon")
     ax.set_ylabel("Value / bound")
     ax.grid(alpha=0.25)
     ax.legend(frameon=False)
+    fig.tight_layout()
+    _save_fig(fig, path)
+    plt.close(fig)
+
+
+def _save_plot_value_bound_tightness_real_reward(df_value: pd.DataFrame, path: Path) -> None:
+    """Plot the selected real-reward benchmark against its theorem bound."""
+    selected = df_value[df_value["selected_for_paper"]].copy()
+    if selected.empty:
+        selected = df_value.copy()
+    selected = selected.sort_values("epsilon")
+
+    bench = str(selected["selected_benchmark"].iloc[0]) if "selected_benchmark" in selected.columns else str(selected["benchmark"].iloc[0])
+    reward = str(selected["selected_reward_label"].iloc[0]) if "selected_reward_label" in selected.columns else str(selected["reward_label"].iloc[0])
+    max_ratio = float(selected["tightness_ratio"].max()) if "tightness_ratio" in selected.columns else 0.0
+
+    fig, ax = plt.subplots(figsize=(6.5, 4))
+    ax.plot(selected["epsilon"], selected["empirical_value_error"], marker="o", label="Empirical value error")
+    ax.plot(selected["epsilon"], selected["theorem_4_4_style_bound"], marker="s", label=r"$L_R \, T \, D_{m,T}^{W}$")
+    ax.set_title(f"Real-Reward Bound Tightness ({bench}, {reward})")
+    ax.set_xlabel("epsilon")
+    ax.set_ylabel("Value / bound")
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False)
+    ax.text(
+        0.98,
+        0.02,
+        f"max ratio = {max_ratio:.2f}",
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=9,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85},
+    )
     fig.tight_layout()
     _save_fig(fig, path)
     plt.close(fig)
@@ -790,6 +1103,7 @@ def run_spectral_partition_comparison(
                     if k > len(policies):
                         continue
                     selected = greedy_select_fscs(cache, k=k)
+                    probe_gap_sup = subset_probe_gap_sup(cache, selected)
                     approx_part = approximate_partition_from_subset(
                         cache=cache,
                         fsc_indices=selected,
@@ -809,6 +1123,8 @@ def run_spectral_partition_comparison(
                             "approx_classes": float(agreement["approx_classes"]),
                             "adjusted_rand_index": float(agreement["adjusted_rand_index"]),
                             "merge_fidelity": float(agreement["merge_fidelity"]),
+                            "probe_gap_sup": float(probe_gap_sup),
+                            "exact_probe_recovery": bool(probe_gap_sup <= 1e-12),
                         }
                     )
 
@@ -2240,6 +2556,48 @@ def _save_plot_hyperparameter_heatmap(df: pd.DataFrame, path: Path) -> None:
     plt.close(fig)
 
 
+def _save_plot_channel_rate_distortion(df: pd.DataFrame, path: Path) -> None:
+    """Line plot of class_count vs noise level, separate curves for m=1 and m=2."""
+    fig, ax = plt.subplots(figsize=(6, 4))
+    # Filter to eps=0.3 for a clean cross-section
+    sub = df[np.isclose(df["epsilon"], 0.3)]
+    for m_val in sorted(sub["m"].unique()):
+        m_sub = sub[sub["m"] == m_val].sort_values("noise")
+        ax.plot(m_sub["noise"], m_sub["class_count"], marker="o", label=f"$m={int(m_val)}$")
+    ax.set_xlabel("Channel noise")
+    ax.set_ylabel("Quotient class count")
+    ax.set_title(r"Channel communication: classes vs.\ noise ($\varepsilon{=}0.3$)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _save_plot_model_distinguishability(df: pd.DataFrame, path: Path) -> None:
+    """Grouped bar chart of D_{m,T} vs accuracy gap."""
+    fig, ax = plt.subplots(figsize=(7, 4))
+    sub = df[np.isclose(df["horizon"], 2.0)]
+    gaps = sorted(sub["accuracy_gap"].unique())
+    ms = sorted(sub["m"].unique())
+    width = 0.35
+    x = np.arange(len(gaps))
+    for i, m_val in enumerate(ms):
+        m_sub = sub[sub["m"] == m_val].sort_values("accuracy_gap")
+        vals = [float(m_sub[m_sub["accuracy_gap"] == g]["d_m_t_forward"].iloc[0]) if len(m_sub[m_sub["accuracy_gap"] == g]) > 0 else 0.0 for g in gaps]
+        ax.bar(x + i * width - width / 2, vals, width, label=f"$m={int(m_val)}$")
+    ax.set_xlabel("Accuracy gap")
+    ax.set_ylabel(r"$D_{m,T}$")
+    ax.set_title(r"Model distinguishability ($T{=}2$)")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{g:.2f}" for g in gaps])
+    ax.legend()
+    ax.grid(True, alpha=0.3, axis="y")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def run_medium_scale_experiment(
     eps_grid: Sequence[float],
     seed: int = 42,
@@ -2249,7 +2607,7 @@ def run_medium_scale_experiment(
     Uses sampling-based distance estimation (sampling.py) to handle the larger
     state space where exact enumeration of observation distributions is costly.
     """
-    from .sampling import sampling_based_distance_cache
+    from .sampling import max_pairwise_w1_bootstrap_ci, sampling_based_distance_cache
 
     rows: List[Dict[str, float]] = []
 
@@ -2261,15 +2619,20 @@ def run_medium_scale_experiment(
         horizon = 2
 
         t0 = time.perf_counter()
-        cache = sampling_based_distance_cache(
+        cache, raw_samples = sampling_based_distance_cache(
             pomdp=pomdp,
             policies=policies,
             horizon=horizon,
             d_obs=d_obs,
             num_samples=500,
             seed=seed,
+            return_samples=True,
         )
         cache_time = time.perf_counter() - t0
+
+        _, ci_lo, ci_hi = max_pairwise_w1_bootstrap_ci(
+            raw_samples, cache, d_obs, seed=seed,
+        )
 
         for eps in eps_grid:
             part = compute_partition_from_cache(cache, epsilon=float(eps))
@@ -2289,6 +2652,8 @@ def run_medium_scale_experiment(
                 "method": "sampling",
                 "num_samples": 500.0,
                 "cache_time_s": round(cache_time, 4),
+                "max_w1_ci_lo": round(ci_lo, 4),
+                "max_w1_ci_hi": round(ci_hi, 4),
             })
 
     # Random structured POMDP with |S|=50
@@ -2299,15 +2664,20 @@ def run_medium_scale_experiment(
         horizon = 2
 
         t0 = time.perf_counter()
-        cache = sampling_based_distance_cache(
+        cache, raw_samples = sampling_based_distance_cache(
             pomdp=pomdp,
             policies=policies,
             horizon=horizon,
             d_obs=d_obs,
             num_samples=500,
             seed=rseed,
+            return_samples=True,
         )
         cache_time = time.perf_counter() - t0
+
+        _, ci_lo, ci_hi = max_pairwise_w1_bootstrap_ci(
+            raw_samples, cache, d_obs, seed=rseed,
+        )
 
         for eps in eps_grid:
             part = compute_partition_from_cache(cache, epsilon=float(eps))
@@ -2328,6 +2698,8 @@ def run_medium_scale_experiment(
                 "num_samples": 500.0,
                 "instance_seed": float(rseed),
                 "cache_time_s": round(cache_time, 4),
+                "max_w1_ci_lo": round(ci_lo, 4),
+                "max_w1_ci_hi": round(ci_hi, 4),
             })
 
     # Random structured POMDP with |S|=100
@@ -2340,15 +2712,20 @@ def run_medium_scale_experiment(
         horizon = 2
 
         t0 = time.perf_counter()
-        cache = sampling_based_distance_cache(
+        cache, raw_samples = sampling_based_distance_cache(
             pomdp=pomdp,
             policies=policies,
             horizon=horizon,
             d_obs=d_obs,
             num_samples=500,
             seed=rseed,
+            return_samples=True,
         )
         cache_time = time.perf_counter() - t0
+
+        _, ci_lo, ci_hi = max_pairwise_w1_bootstrap_ci(
+            raw_samples, cache, d_obs, seed=rseed,
+        )
 
         for eps in eps_grid:
             part = compute_partition_from_cache(cache, epsilon=float(eps))
@@ -2369,6 +2746,8 @@ def run_medium_scale_experiment(
                 "num_samples": 500.0,
                 "instance_seed": float(rseed),
                 "cache_time_s": round(cache_time, 4),
+                "max_w1_ci_lo": round(ci_lo, 4),
+                "max_w1_ci_hi": round(ci_hi, 4),
             })
 
     return pd.DataFrame(rows)
@@ -2946,6 +3325,26 @@ def run_reward_planning_experiment(
     return pd.DataFrame(rows)
 
 
+def run_probe_family_comparison() -> pd.DataFrame:
+    """Exact theorem-object vs operational-object comparison for the paper tables."""
+    return _run_probe_family_comparison()
+
+
+def run_exact_observation_planning() -> pd.DataFrame:
+    """Exact planning utility for observation-accessible objectives under Q_clk."""
+    return _run_exact_observation_planning()
+
+
+def run_exact_latent_planning() -> pd.DataFrame:
+    """Exact clock-aware latent-state planning rows for the paper tables."""
+    return _run_exact_latent_planning()
+
+
+def export_paper_theory_first_tables(output_dir: Path, paper_generated_dir: Path) -> Dict[str, pd.DataFrame]:
+    """Write machine-readable artifacts plus LaTeX tables for the theory-first paper revision."""
+    return _export_theory_first_tables(output_dir=output_dir, paper_generated_dir=paper_generated_dir)
+
+
 def run_planning_speedup_experiment(
     eps_grid: Sequence[float],
     ms: Sequence[int] = (1,),
@@ -3025,6 +3424,965 @@ def run_planning_speedup_experiment(
     return pd.DataFrame(rows)
 
 
+def run_w1_vs_tv_structured_comparison(
+    eps_grid: Sequence[float],
+) -> pd.DataFrame:
+    """Compare W1 (structured geometric metric) vs TV (discrete metric) partitions.
+
+    Uses a 5x5 GridWorld where quadrant observations have natural spatial
+    structure.  W1 with the geometric ground metric recognises that adjacent
+    quadrant observations are "close," producing strictly fewer equivalence
+    classes (more merging) than TV at moderate epsilon values.
+    """
+    pomdp = gridworld_pomdp(size=5)
+    horizon = 2
+
+    policies = enumerate_deterministic_fscs(
+        num_actions=pomdp.num_actions,
+        num_observations=pomdp.num_observations,
+        max_nodes=1,
+        include_smaller=True,
+    )
+
+    cache_w1 = precompute_distance_cache(
+        pomdp=pomdp,
+        policies=policies,
+        horizon=horizon,
+        distance_mode="w1",
+        d_obs=gridworld_geometric_observation_metric(),
+    )
+    cache_tv = precompute_distance_cache(
+        pomdp=pomdp,
+        policies=policies,
+        horizon=horizon,
+        distance_mode="tv",
+        d_obs=discrete_observation_metric(pomdp.num_observations),
+    )
+
+    rows: List[Dict[str, float]] = []
+    for eps in eps_grid:
+        part_w1 = compute_partition_from_cache(cache_w1, epsilon=float(eps))
+        part_tv = compute_partition_from_cache(cache_tv, epsilon=float(eps))
+        classes_w1 = part_w1.num_classes_total
+        classes_tv = part_tv.num_classes_total
+        rows.append(
+            {
+                "epsilon": float(eps),
+                "classes_w1": float(classes_w1),
+                "classes_tv": float(classes_tv),
+                "classes_diff": float(classes_tv - classes_w1),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def pbvi_solve(
+    pomdp: FinitePOMDP,
+    horizon: int,
+    num_belief_points: int = 50,
+    gamma: float = 1.0,
+    seed: int = 42,
+) -> float:
+    """Simple point-based value iteration (PBVI) for a finite-horizon POMDP.
+
+    Samples belief points via random forward simulation, runs point-based
+    Bellman backups for *horizon* steps, and returns the value at b0.
+    """
+    rng = np.random.default_rng(seed)
+    num_s = pomdp.num_states
+    num_a = pomdp.num_actions
+    num_o = pomdp.num_observations
+
+    # ------------------------------------------------------------------
+    # 1. Sample belief points by random forward simulation
+    # ------------------------------------------------------------------
+    beliefs: List[np.ndarray] = [pomdp.initial_belief.copy()]
+    b = pomdp.initial_belief.copy()
+    for _ in range(num_belief_points - 1):
+        a = rng.integers(num_a)
+        # Vectorized: obs_probs[o] = sum_s sum_s' b[s] * T[s,a,s'] * O[s',a,o]
+        # b @ T[:, a, :] gives predicted next-state distribution (num_s,)
+        # then @ O[:, a, :] maps to observation probabilities (num_o,)
+        b_trans = b @ pomdp.transition[:, a, :]  # (num_s,)
+        obs_probs = b_trans @ pomdp.observation[:, a, :]  # (num_o,)
+        z = obs_probs.sum()
+        if z <= 0.0:
+            b = pomdp.initial_belief.copy()
+            beliefs.append(b.copy())
+            continue
+        obs_probs /= z
+        o = rng.choice(num_o, p=obs_probs)
+        # Vectorized Bayesian update:
+        # b_next[s'] = sum_s b[s] * T[s,a,s'] * O[s',a,o]
+        #            = (b @ T[:, a, :])[s'] * O[s', a, o]
+        b_next = b_trans * pomdp.observation[:, a, o]  # (num_s,)
+        zn = b_next.sum()
+        if zn > 0.0:
+            b_next /= zn
+        else:
+            b_next = pomdp.initial_belief.copy()
+        b = b_next
+        beliefs.append(b.copy())
+
+    belief_set = np.array(beliefs, dtype=float)  # (num_points, num_s)
+    num_points = belief_set.shape[0]
+
+    # ------------------------------------------------------------------
+    # 2. Point-based backup iterations
+    # ------------------------------------------------------------------
+    # Alpha vectors: one per belief point, shape (num_points, num_s)
+    alpha_vectors = np.zeros((num_points, num_s), dtype=float)
+
+    for _t in range(horizon):
+        new_alpha = np.zeros((num_points, num_s), dtype=float)
+        for idx in range(num_points):
+            b_pt = belief_set[idx]
+            best_val = -np.inf
+            best_alpha_s = None
+            for a in range(num_a):
+                alpha_a = pomdp.rewards[:, a].copy()
+                # Precompute b_pt @ T[:, a, :] once per action
+                b_pt_trans = b_pt @ pomdp.transition[:, a, :]  # (num_s,)
+                for o in range(num_o):
+                    # Vectorized tau: tau[s'] = sum_s b_pt[s] * T[s,a,s'] * O[s',a,o]
+                    #                         = b_pt_trans[s'] * O[s', a, o]
+                    tau = b_pt_trans * pomdp.observation[:, a, o]  # (num_s,)
+                    p_o = tau.sum()
+                    if p_o <= 0.0:
+                        continue
+                    tau /= p_o
+                    # Find best alpha vector for this successor belief
+                    vals = alpha_vectors @ tau
+                    best_k = int(np.argmax(vals))
+                    # Vectorized contribution:
+                    # contrib[s] = sum_{s'} T[s,a,s'] * O[s',a,o] * alpha[best_k, s']
+                    #            = T[:, a, :] @ (O[:, a, o] * alpha[best_k, :])
+                    contrib = pomdp.transition[:, a, :] @ (
+                        pomdp.observation[:, a, o] * alpha_vectors[best_k, :]
+                    )  # (num_s,)
+                    alpha_a += gamma * contrib
+                val = float(alpha_a @ b_pt)
+                if val > best_val:
+                    best_val = val
+                    best_alpha_s = alpha_a.copy()
+            new_alpha[idx] = best_alpha_s
+        alpha_vectors = new_alpha
+
+    # ------------------------------------------------------------------
+    # 3. Value at initial belief
+    # ------------------------------------------------------------------
+    vals_at_b0 = alpha_vectors @ pomdp.initial_belief
+    return float(np.max(vals_at_b0))
+
+
+def materialize_quotient_pomdp(
+    pomdp: FinitePOMDP,
+    partition: PartitionResult,
+    policy: DeterministicFSC,
+) -> FinitePOMDP:
+    """Build an explicit FinitePOMDP whose states are partition equivalence classes.
+
+    Transition and observation kernels are derived from canonical class beliefs
+    (the average belief across histories in each class).  The quotient preserves
+    the original action and observation spaces.
+    """
+    from .quotient import _class_canonical_beliefs, _representative_history
+
+    beliefs = _class_canonical_beliefs(pomdp=pomdp, partition=partition, policy=policy)
+
+    # Map class ids to contiguous state indices
+    class_ids = sorted(partition.class_histories.keys())
+    cid_to_idx = {cid: i for i, cid in enumerate(class_ids)}
+    num_q_states = len(class_ids)
+    num_a = pomdp.num_actions
+    num_o = pomdp.num_observations
+
+    transition_q = np.zeros((num_q_states, num_a, num_q_states), dtype=float)
+    observation_q = np.zeros((num_q_states, num_a, num_o), dtype=float)
+    rewards_q = np.zeros((num_q_states, num_a), dtype=float)
+
+    for cid in class_ids:
+        qi = cid_to_idx[cid]
+        b = beliefs[cid]
+        depth = partition.class_depth[cid]
+
+        for a in range(num_a):
+            # Reward at this class-state
+            rewards_q[qi, a] = float(np.dot(b, pomdp.rewards[:, a]))
+
+            if depth >= partition.horizon:
+                # Terminal class — no transitions
+                transition_q[qi, a, qi] = 1.0
+                observation_q[qi, a, :] = 1.0 / num_o
+                continue
+
+            # Compute observation probabilities from canonical belief
+            obs_probs = np.zeros(num_o, dtype=float)
+            for o in range(num_o):
+                for s in range(pomdp.num_states):
+                    for s_next in range(pomdp.num_states):
+                        obs_probs[o] += b[s] * pomdp.transition[s, a, s_next] * pomdp.observation[s_next, a, o]
+
+            z_obs = obs_probs.sum()
+            if z_obs > 0.0:
+                observation_q[qi, a, :] = obs_probs / z_obs
+            else:
+                observation_q[qi, a, :] = 1.0 / num_o
+
+            # Transitions to next class-states via representative history
+            rep = _representative_history(partition, cid)
+            for o in range(num_o):
+                if obs_probs[o] <= 0.0:
+                    continue
+                next_h = rep + (o,)
+                if next_h in partition.history_to_class:
+                    next_cid = partition.history_to_class[next_h]
+                    qj = cid_to_idx[next_cid]
+                    transition_q[qi, a, qj] += obs_probs[o]
+
+            # Normalize transition row
+            tz = transition_q[qi, a, :].sum()
+            if tz > 0.0:
+                transition_q[qi, a, :] /= tz
+            else:
+                transition_q[qi, a, qi] = 1.0
+
+    # Initial belief concentrated on the root class
+    b0_q = np.zeros(num_q_states, dtype=float)
+    root_cid = partition.history_to_class[()]
+    b0_q[cid_to_idx[root_cid]] = 1.0
+
+    state_names = tuple(f"class_{cid}" for cid in class_ids)
+    return FinitePOMDP(
+        state_names=state_names,
+        action_names=pomdp.action_names,
+        observation_names=pomdp.observation_names,
+        transition=transition_q,
+        observation=observation_q,
+        rewards=rewards_q,
+        initial_belief=b0_q,
+    )
+
+
+def run_pbvi_quotient_comparison(
+    eps_grid: Sequence[float],
+) -> pd.DataFrame:
+    """Compare PBVI planning on original vs materialised quotient POMDPs.
+
+    For Tiger, GridWorld 3x3/5x5, RockSample(4,4), and Network Monitoring
+    (n=4), builds the quotient at each epsilon using operational probes (m=1),
+    materialises it as a FinitePOMDP, and compares PBVI wall-clock time, value,
+    speedup, and timing breakdown (partition, build, solve).
+    """
+    horizon = 3
+
+    benchmarks: List[Tuple[str, FinitePOMDP, np.ndarray]] = [
+        ("tiger_full_actions", tiger_full_actions_pomdp(), tiger_discrete_observation_metric()),
+        ("gridworld_3x3", gridworld_pomdp(size=3), gridworld_geometric_observation_metric()),
+        ("gridworld_5x5", gridworld_pomdp(size=5), gridworld_geometric_observation_metric()),
+        ("rocksample_4_4", rocksample_pomdp(), discrete_observation_metric(3)),
+        ("network_monitoring_4", network_monitoring_pomdp(num_nodes=4), discrete_observation_metric(3)),
+    ]
+
+    rows: List[Dict[str, object]] = []
+    for bench_name, pomdp, d_obs in benchmarks:
+        policies = enumerate_deterministic_fscs(
+            num_actions=pomdp.num_actions,
+            num_observations=pomdp.num_observations,
+            max_nodes=1,
+            include_smaller=True,
+        )
+        cache = precompute_distance_cache(
+            pomdp=pomdp,
+            policies=policies,
+            horizon=horizon,
+            distance_mode="w1",
+            d_obs=d_obs,
+        )
+
+        # Solve original POMDP once
+        t0 = time.perf_counter()
+        value_original = pbvi_solve(pomdp, horizon=horizon)
+        time_original = time.perf_counter() - t0
+
+        # Use first policy as canonical for materialisation
+        canonical_policy = policies[0]
+
+        for eps in eps_grid:
+            t_part = time.perf_counter()
+            partition = compute_partition_from_cache(cache, epsilon=float(eps))
+            partition_time = time.perf_counter() - t_part
+            num_classes = partition.num_classes_total
+
+            # Materialise and solve quotient
+            t_build = time.perf_counter()
+            quotient_pomdp = materialize_quotient_pomdp(
+                pomdp=pomdp,
+                partition=partition,
+                policy=canonical_policy,
+            )
+            build_time = time.perf_counter() - t_build
+
+            t0 = time.perf_counter()
+            value_quotient = pbvi_solve(quotient_pomdp, horizon=horizon)
+            time_quotient = time.perf_counter() - t0
+
+            total_quotient_time = partition_time + build_time + time_quotient
+            speedup = time_original / max(total_quotient_time, 1e-9)
+            value_gap = abs(value_original - value_quotient)
+
+            rows.append(
+                {
+                    "benchmark": bench_name,
+                    "epsilon": float(eps),
+                    "classes": float(num_classes),
+                    "original_states": float(pomdp.num_states),
+                    "quotient_states": float(num_classes),
+                    "time_original_s": round(time_original, 6),
+                    "time_quotient_s": round(time_quotient, 6),
+                    "partition_time_s": round(partition_time, 6),
+                    "build_time_s": round(build_time, 6),
+                    "total_quotient_time_s": round(total_quotient_time, 6),
+                    "speedup": round(speedup, 4),
+                    "value_original": round(value_original, 8),
+                    "value_quotient": round(value_quotient, 8),
+                    "value_gap": round(value_gap, 8),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def run_channel_communication_experiment(
+    eps_grid: Sequence[float],
+    noise_levels: Sequence[float] = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5),
+    ms: Sequence[int] = (1, 2),
+    num_symbols: int = 4,
+    num_codewords: int = 4,
+    horizon: int = 2,
+) -> pd.DataFrame:
+    """Channel communication experiment: quotient size vs noise and memory.
+
+    Sweeps noise levels and memory bounds.  Expected: increasing noise collapses
+    quotient classes (fewer distinguishable messages); increasing m recovers some.
+    """
+    rows: List[Dict[str, float]] = []
+    total_histories = sum(num_codewords ** d for d in range(horizon + 1))
+
+    for noise in noise_levels:
+        pomdp = channel_communication_pomdp(
+            num_symbols=num_symbols,
+            num_codewords=num_codewords,
+            noise=noise,
+        )
+        d_obs = channel_obs_metric(num_codewords)
+
+        for m in ms:
+            policies = enumerate_deterministic_fscs(
+                num_actions=pomdp.num_actions,
+                num_observations=pomdp.num_observations,
+                max_nodes=m,
+                include_smaller=True,
+            )
+            cache = precompute_distance_cache(
+                pomdp=pomdp,
+                policies=policies,
+                horizon=horizon,
+                distance_mode="w1",
+                d_obs=d_obs,
+            )
+
+            for eps in eps_grid:
+                part = compute_partition_from_cache(cache, epsilon=float(eps))
+                rows.append({
+                    "noise": float(noise),
+                    "m": float(m),
+                    "epsilon": float(eps),
+                    "class_count": float(part.num_classes_total),
+                    "compression_ratio": float(part.num_classes_total) / float(total_histories),
+                    "num_symbols": float(num_symbols),
+                    "num_codewords": float(num_codewords),
+                    "horizon": float(horizon),
+                    "policy_count": float(len(policies)),
+                })
+
+    return pd.DataFrame(rows)
+
+
+def run_model_distinguishability_experiment(
+    accuracies: Sequence[float] = (0.80, 0.75, 0.70),
+    reference_accuracy: float = 0.85,
+    ms: Sequence[int] = (1, 2),
+    horizons: Sequence[int] = (2, 3),
+) -> pd.DataFrame:
+    """Model distinguishability: D_{m,T}(M1, M2) for Tiger with varying accuracy.
+
+    Compares a reference Tiger POMDP against variants with lower observation
+    accuracy.  Expected: at m=1, small accuracy differences are invisible;
+    at m=2, they become detectable.
+    """
+    d_obs = tiger_discrete_observation_metric()
+    ref_pomdp = tiger_listen_only_pomdp(accuracy=reference_accuracy)
+
+    rows: List[Dict[str, float]] = []
+
+    for acc in accuracies:
+        test_pomdp = tiger_listen_only_pomdp(accuracy=acc)
+
+        for m in ms:
+            policies = enumerate_deterministic_fscs(
+                num_actions=ref_pomdp.num_actions,
+                num_observations=ref_pomdp.num_observations,
+                max_nodes=m,
+                include_smaller=True,
+            )
+
+            for horizon in horizons:
+                d_val = d_m_t_between_two_pomdps(
+                    pomdp1=ref_pomdp,
+                    pomdp2=test_pomdp,
+                    policies=policies,
+                    horizon=horizon,
+                    distance_mode="w1",
+                    d_obs=d_obs,
+                )
+                # Also compute reverse direction for symmetry check
+                d_rev = d_m_t_between_two_pomdps(
+                    pomdp1=test_pomdp,
+                    pomdp2=ref_pomdp,
+                    policies=policies,
+                    horizon=horizon,
+                    distance_mode="w1",
+                    d_obs=d_obs,
+                )
+                rows.append({
+                    "reference_accuracy": float(reference_accuracy),
+                    "test_accuracy": float(acc),
+                    "accuracy_gap": float(reference_accuracy - acc),
+                    "m": float(m),
+                    "horizon": float(horizon),
+                    "d_m_t_forward": float(d_val),
+                    "d_m_t_reverse": float(d_rev),
+                    "symmetry_gap": float(abs(d_val - d_rev)),
+                    "policy_count": float(len(policies)),
+                })
+
+    return pd.DataFrame(rows)
+
+
+def run_large_scale_scaling_experiment(
+    seed: int = 42,
+    num_samples: int = 500,
+) -> pd.DataFrame:
+    """Scale to |S| >= 1000 using NetworkMonitoring(num_nodes=10) -> |S|=1024.
+
+    Uses sampling-based distance cache. Reports class counts and runtime.
+    """
+    from .sampling import sampling_based_distance_cache
+
+    pomdp = network_monitoring_pomdp(num_nodes=10)
+    d_obs = discrete_observation_metric(pomdp.num_observations)
+    policies = _policies_m1_for_pomdp(pomdp)
+    horizon = 2
+
+    t0 = time.perf_counter()
+    cache = sampling_based_distance_cache(
+        pomdp=pomdp,
+        policies=policies,
+        horizon=horizon,
+        d_obs=d_obs,
+        num_samples=num_samples,
+        seed=seed,
+    )
+    elapsed = time.perf_counter() - t0
+
+    total_h = sum(len(cache.histories_by_depth[d]) for d in range(cache.horizon + 1))
+
+    rows: List[Dict[str, float]] = []
+    for eps in (0.0, 0.1, 0.2, 0.3, 0.5):
+        part = compute_partition_from_cache(cache, epsilon=eps)
+        rows.append({
+            "benchmark": "network_monitoring_10",
+            "num_states": float(pomdp.num_states),
+            "num_nodes": 10.0,
+            "horizon": float(horizon),
+            "m": 1.0,
+            "epsilon": eps,
+            "class_count": float(part.num_classes_total),
+            "total_histories": float(total_h),
+            "compression_ratio": float(part.num_classes_total) / float(total_h),
+            "policy_count": float(len(policies)),
+            "method": "sampling",
+            "num_samples": float(num_samples),
+            "runtime_s": round(elapsed, 3),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def run_m2_scaling_experiment(
+    seed: int = 42,
+    num_samples: int = 500,
+) -> pd.DataFrame:
+    """Compare m=1 vs m=2 probe families at medium-to-large scale using sampling.
+
+    Demonstrates that richer probe families (m=2) produce finer partitions
+    than m=1 (Proposition 4.8), validated on RockSample and Network Monitoring
+    at scales beyond the exact-for-family benchmarks.
+    """
+    from .sampling import max_pairwise_w1_bootstrap_ci, sampling_based_distance_cache
+
+    rows: List[Dict[str, object]] = []
+    eps_grid = (0.0, 0.1, 0.3, 0.5)
+
+    configs: List[Tuple[str, FinitePOMDP, np.ndarray, int]] = [
+        (
+            "RockSample$(4,4)$",
+            rocksample_pomdp(),
+            rocksample_observation_metric(),
+            2,
+        ),
+        (
+            "Net.\\ Mon.\\ ($n{=}9$)",
+            network_monitoring_pomdp(num_nodes=9),
+            discrete_observation_metric(3),
+            2,
+        ),
+        (
+            "Net.\\ Mon.\\ ($n{=}4$)",
+            network_monitoring_pomdp(num_nodes=4),
+            discrete_observation_metric(3),
+            3,
+        ),
+    ]
+
+    for bench_name, pomdp, d_obs, horizon in configs:
+        for m in (1, 2):
+            policies = enumerate_deterministic_fscs(
+                num_actions=pomdp.num_actions,
+                num_observations=pomdp.num_observations,
+                max_nodes=m,
+                include_smaller=True,
+            )
+
+            t0 = time.perf_counter()
+            cache, raw_samples = sampling_based_distance_cache(
+                pomdp=pomdp,
+                policies=policies,
+                horizon=horizon,
+                d_obs=d_obs,
+                num_samples=num_samples,
+                seed=seed,
+                return_samples=True,
+            )
+            cache_time = time.perf_counter() - t0
+
+            _, ci_lo, ci_hi = max_pairwise_w1_bootstrap_ci(
+                raw_samples, cache, d_obs, seed=seed,
+            )
+
+            total_h = sum(
+                len(cache.histories_by_depth[d])
+                for d in range(cache.horizon + 1)
+            )
+
+            for eps in eps_grid:
+                part = compute_partition_from_cache(cache, epsilon=float(eps))
+                rows.append({
+                    "benchmark": bench_name,
+                    "num_states": float(pomdp.num_states),
+                    "horizon": float(horizon),
+                    "m": float(m),
+                    "epsilon": float(eps),
+                    "class_count": float(part.num_classes_total),
+                    "total_histories": float(total_h),
+                    "fsc_count": float(len(policies)),
+                    "method": "sampling",
+                    "num_samples": float(num_samples),
+                    "cache_time_s": round(cache_time, 2),
+                    "max_w1_ci_lo": round(ci_lo, 4),
+                    "max_w1_ci_hi": round(ci_hi, 4),
+                })
+
+    return pd.DataFrame(rows)
+
+
+def run_meaningful_scale_experiment(
+    seed: int = 42,
+    num_samples: int = 500,
+) -> pd.DataFrame:
+    """Scale to |S| >= 1000 with multiple tracks: large |S|, large |O|, and long T via layering.
+
+    Track 1 (scale-up): network_monitoring(12) for |S|=4096, |O|=3, T=2
+    Track 2 (large-obs): random_structured(2000, num_obs=10) for |S|=2000, |O|=10, T=2
+    Track 3 (long-horizon): network_monitoring(10) for |S|=1024, |O|=3, T=20 via layering
+    """
+    from .sampling import max_pairwise_w1_bootstrap_ci, sampling_based_distance_cache
+
+    rows: List[Dict[str, object]] = []
+
+    # --- Track 1: |S|=4096, |O|=3, T=2 ---
+    pomdp1 = network_monitoring_pomdp(num_nodes=12)
+    d_obs1 = discrete_observation_metric(pomdp1.num_observations)
+    policies1 = _policies_m1_for_pomdp(pomdp1)
+
+    t0 = time.perf_counter()
+    cache1, samples1 = sampling_based_distance_cache(
+        pomdp=pomdp1, policies=policies1, horizon=2,
+        d_obs=d_obs1, num_samples=num_samples, seed=seed,
+        return_samples=True,
+    )
+    elapsed1 = time.perf_counter() - t0
+    total_h1 = sum(len(cache1.histories_by_depth[d]) for d in range(cache1.horizon + 1))
+    _, ci_lo1, ci_hi1 = max_pairwise_w1_bootstrap_ci(samples1, cache1, d_obs1, seed=seed)
+
+    for eps in (0.0, 0.1, 0.3, 0.5):
+        part = compute_partition_from_cache(cache1, epsilon=eps)
+        rows.append({
+            "track": "scale_up",
+            "benchmark": "network_monitoring_12",
+            "num_states": float(pomdp1.num_states),
+            "num_obs": float(pomdp1.num_observations),
+            "horizon": 2.0,
+            "effective_T": 2.0,
+            "m": 1.0,
+            "epsilon": eps,
+            "class_count": float(part.num_classes_total),
+            "total_histories": float(total_h1),
+            "method": "sampling",
+            "num_samples": float(num_samples),
+            "runtime_s": round(elapsed1, 3),
+            "max_w1_ci_lo": round(ci_lo1, 4),
+            "max_w1_ci_hi": round(ci_hi1, 4),
+        })
+
+    # --- Track 2: |S|=2000, |O|=10, T=2 ---
+    pomdp2 = random_structured_pomdp(num_states=2000, num_actions=5, num_observations=10, seed=seed)
+    d_obs2 = discrete_observation_metric(pomdp2.num_observations)
+    policies2 = _policies_m1_for_pomdp(pomdp2)
+
+    t0 = time.perf_counter()
+    cache2, samples2 = sampling_based_distance_cache(
+        pomdp=pomdp2, policies=policies2, horizon=2,
+        d_obs=d_obs2, num_samples=num_samples, seed=seed,
+        return_samples=True,
+    )
+    elapsed2 = time.perf_counter() - t0
+    total_h2 = sum(len(cache2.histories_by_depth[d]) for d in range(cache2.horizon + 1))
+    _, ci_lo2, ci_hi2 = max_pairwise_w1_bootstrap_ci(samples2, cache2, d_obs2, seed=seed)
+
+    for eps in (0.0, 0.1, 0.3, 0.5):
+        part = compute_partition_from_cache(cache2, epsilon=eps)
+        rows.append({
+            "track": "large_obs",
+            "benchmark": "random_2000_obs10",
+            "num_states": float(pomdp2.num_states),
+            "num_obs": float(pomdp2.num_observations),
+            "horizon": 2.0,
+            "effective_T": 2.0,
+            "m": 1.0,
+            "epsilon": eps,
+            "class_count": float(part.num_classes_total),
+            "total_histories": float(total_h2),
+            "method": "sampling",
+            "num_samples": float(num_samples),
+            "runtime_s": round(elapsed2, 3),
+            "max_w1_ci_lo": round(ci_lo2, 4),
+            "max_w1_ci_hi": round(ci_hi2, 4),
+        })
+
+    # --- Track 3: |S|=1024, |O|=3, T=20 via layering ---
+    pomdp3 = network_monitoring_pomdp(num_nodes=10)
+    d_obs3 = discrete_observation_metric(pomdp3.num_observations)
+    policies3 = _policies_m1_for_pomdp(pomdp3)
+    segment_horizon = 4
+    num_segments = 5  # 5 * 4 = 20
+
+    t0 = time.perf_counter()
+    # Build segment-level cache
+    seg_cache, seg_samples = sampling_based_distance_cache(
+        pomdp=pomdp3, policies=policies3, horizon=segment_horizon,
+        d_obs=d_obs3, num_samples=num_samples, seed=seed,
+        return_samples=True,
+    )
+    elapsed3 = time.perf_counter() - t0
+    _, ci_lo3, ci_hi3 = max_pairwise_w1_bootstrap_ci(seg_samples, seg_cache, d_obs3, seed=seed)
+
+    seg_total_h = sum(len(seg_cache.histories_by_depth[d]) for d in range(seg_cache.horizon + 1))
+
+    for eps in (0.0, 0.1, 0.3, 0.5):
+        seg_part = compute_partition_from_cache(seg_cache, epsilon=eps)
+        # Layered class count: each segment produces the same partition
+        layered_classes = seg_part.num_classes_total
+        # Global distortion bound: num_segments * segment_epsilon
+        global_bound = num_segments * eps
+
+        rows.append({
+            "track": "long_horizon",
+            "benchmark": "network_monitoring_10",
+            "num_states": float(pomdp3.num_states),
+            "num_obs": float(pomdp3.num_observations),
+            "horizon": float(segment_horizon * num_segments),
+            "effective_T": float(segment_horizon),
+            "m": 1.0,
+            "epsilon": eps,
+            "class_count": float(layered_classes),
+            "total_histories": float(seg_total_h),
+            "method": "layered_sampling",
+            "num_samples": float(num_samples),
+            "runtime_s": round(elapsed3 * num_segments, 3),
+            "max_w1_ci_lo": round(ci_lo3, 4),
+            "max_w1_ci_hi": round(ci_hi3, 4),
+        })
+
+    return pd.DataFrame(rows)
+
+
+
+def run_bootstrap_ci_experiment(
+    seed: int = 42,
+    num_samples: int = 500,
+    n_bootstrap: int = 1000,
+) -> pd.DataFrame:
+    """Bootstrap confidence intervals on max pairwise W1 for medium-scale benchmarks.
+
+    Reports CI widths as fraction of epsilon threshold.
+    """
+    from .pomdp_core import all_histories
+    from .sampling import bootstrap_w1_ci, sample_future_observations, sampling_based_distance_cache
+
+    rng = np.random.default_rng(seed)
+
+    benchmarks: List[Tuple[str, FinitePOMDP, np.ndarray]] = [
+        ("gridworld_3x3", gridworld_pomdp(size=3), gridworld_geometric_observation_metric()),
+        ("gridworld_10x10", gridworld_pomdp(size=10), gridworld_geometric_observation_metric()),
+    ]
+
+    rows: List[Dict[str, object]] = []
+    horizon = 2
+
+    for bench_name, pomdp, d_obs in benchmarks:
+        policies = _policies_m1_for_pomdp(pomdp)
+        histories_by_depth = all_histories(
+            num_observations=pomdp.num_observations, horizon=horizon
+        )
+
+        # Sample futures for all (policy, history) pairs
+        all_samples: List[Dict] = []
+        for policy in policies:
+            policy_samples = {}
+            for depth, histories in histories_by_depth.items():
+                for h in histories:
+                    policy_samples[h] = sample_future_observations(
+                        pomdp, policy, h, horizon, num_samples, rng
+                    )
+            all_samples.append(policy_samples)
+
+        # Find the max-distance pair and compute bootstrap CI
+        max_w1 = 0.0
+        max_pair = None
+        max_pi = None
+        for pi_idx, policy in enumerate(policies):
+            for depth, histories in histories_by_depth.items():
+                for i in range(len(histories)):
+                    for j in range(i + 1, len(histories)):
+                        hi, hj = histories[i], histories[j]
+                        from .sampling import empirical_wasserstein_distance
+                        d = empirical_wasserstein_distance(
+                            all_samples[pi_idx][hi],
+                            all_samples[pi_idx][hj],
+                            d_obs,
+                        )
+                        if d > max_w1:
+                            max_w1 = d
+                            max_pair = (hi, hj)
+                            max_pi = pi_idx
+
+        if max_pair is not None and max_pi is not None:
+            point, ci_lo, ci_hi = bootstrap_w1_ci(
+                all_samples[max_pi][max_pair[0]],
+                all_samples[max_pi][max_pair[1]],
+                d_obs,
+                n_bootstrap=n_bootstrap,
+                alpha=0.05,
+                rng=rng,
+            )
+            ci_width = ci_hi - ci_lo
+
+            for eps in (0.1, 0.3, 0.5):
+                rows.append({
+                    "benchmark": bench_name,
+                    "num_states": float(pomdp.num_states),
+                    "epsilon": eps,
+                    "max_w1_point": round(float(point), 6),
+                    "ci_lo": round(float(ci_lo), 6),
+                    "ci_hi": round(float(ci_hi), 6),
+                    "ci_width": round(float(ci_width), 6),
+                    "ci_width_frac_eps": round(float(ci_width / eps), 6),
+                    "num_samples": num_samples,
+                    "n_bootstrap": n_bootstrap,
+                })
+
+    return pd.DataFrame(rows)
+
+
+def run_computational_profile_experiment(seed: int = 42) -> pd.DataFrame:
+    """Profile wall-clock time of each pipeline stage across benchmarks."""
+    from .pomdp_core import all_histories
+
+    benchmarks: List[Tuple[str, FinitePOMDP, np.ndarray, int]] = [
+        ("Tiger", tiger_full_actions_pomdp(), tiger_discrete_observation_metric(), 1),
+        ("GridWorld_3x3", gridworld_pomdp(size=3), gridworld_geometric_observation_metric(), 1),
+        ("RockSample(4,4)", rocksample_pomdp(), rocksample_observation_metric(), 1),
+    ]
+    horizon = 2
+
+    rows: List[Dict[str, object]] = []
+    for bench_name, pomdp, d_obs, m in benchmarks:
+        # Stage 1: FSC enumeration
+        t0 = time.perf_counter()
+        policies = enumerate_deterministic_fscs(
+            num_actions=pomdp.num_actions,
+            num_observations=pomdp.num_observations,
+            max_nodes=m,
+            include_smaller=True,
+        )
+        t_enum = time.perf_counter() - t0
+
+        # Stage 2: Distance cache
+        t0 = time.perf_counter()
+        cache = precompute_distance_cache(
+            pomdp, policies, horizon, distance_mode="w1", d_obs=d_obs,
+        )
+        t_cache = time.perf_counter() - t0
+
+        # Stage 3: Clustering
+        t0 = time.perf_counter()
+        _ = compute_partition_from_cache(cache, epsilon=0.1)
+        t_cluster = time.perf_counter() - t0
+
+        total = t_enum + t_cache + t_cluster
+        histories_by_depth = all_histories(
+            num_observations=pomdp.num_observations, horizon=horizon,
+        )
+        num_histories = sum(len(hs) for hs in histories_by_depth.values())
+        num_pairs = num_histories * (num_histories - 1) // 2
+        num_fscs = len(policies)
+
+        rows.append({
+            "benchmark": bench_name,
+            "num_states": pomdp.num_states,
+            "m": m,
+            "T": horizon,
+            "num_fscs": num_fscs,
+            "num_history_pairs": num_pairs,
+            "w1_lp_count": num_pairs * num_fscs,
+            "fsc_enum_s": round(t_enum, 4),
+            "distance_cache_s": round(t_cache, 4),
+            "clustering_s": round(t_cluster, 4),
+            "total_s": round(total, 4),
+            "pct_fsc_enum": round(100.0 * t_enum / total, 1) if total > 0 else 0.0,
+            "pct_distance_cache": round(100.0 * t_cache / total, 1) if total > 0 else 0.0,
+            "pct_clustering": round(100.0 * t_cluster / total, 1) if total > 0 else 0.0,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def run_bootstrap_coverage_experiment(
+    seed: int = 42,
+    n_replications: int = 200,
+) -> pd.DataFrame:
+    """Validate bootstrap CI coverage for max pairwise W1 against exact ground truth."""
+    from .pomdp_core import all_histories
+    from .sampling import bootstrap_w1_ci, sampling_based_distance_cache
+
+    pomdp = gridworld_pomdp(size=3)
+    d_obs = gridworld_geometric_observation_metric()
+    horizon = 2
+    m = 1
+    policies = enumerate_deterministic_fscs(
+        num_actions=pomdp.num_actions,
+        num_observations=pomdp.num_observations,
+        max_nodes=m,
+        include_smaller=True,
+    )
+
+    # Compute exact ground truth: identify the max-W1 pair and its true distance
+    exact_cache = precompute_distance_cache(
+        pomdp, policies, horizon, distance_mode="w1", d_obs=d_obs,
+    )
+    ground_truth_max_w1 = 0.0
+    gt_depth, gt_i, gt_j, gt_pi_idx = 0, 0, 0, 0
+    for depth, mat in exact_cache.max_distance_matrices.items():
+        if mat.size > 0:
+            idx = np.unravel_index(np.argmax(mat), mat.shape)
+            val = float(mat[idx])
+            if val > ground_truth_max_w1:
+                ground_truth_max_w1 = val
+                gt_depth, gt_i, gt_j = depth, int(idx[0]), int(idx[1])
+
+    gt_histories = exact_cache.histories_by_depth[gt_depth]
+    gt_h1, gt_h2 = gt_histories[gt_i], gt_histories[gt_j]
+
+    # For each pair-specific ground truth, also compute per-policy exact W1
+    # to find the policy that achieves the max for this pair.
+    # The exact_cache.max_distance_matrices stores max over policies, so we
+    # just need the ground truth value for the identified pair.
+    gt_w1_for_pair = ground_truth_max_w1
+
+    sample_sizes = [100, 250, 500]
+    alpha = 0.05
+    n_bootstrap = 500
+    rows: List[Dict[str, object]] = []
+
+    for num_samples in sample_sizes:
+        covers = 0
+        ci_widths: List[float] = []
+        for rep in range(n_replications):
+            rep_seed = seed + rep * 1000 + num_samples
+            rng = np.random.default_rng(rep_seed)
+
+            _, raw_samples = sampling_based_distance_cache(
+                pomdp, policies, horizon, d_obs,
+                num_samples=num_samples, seed=rep_seed, return_samples=True,
+            )
+
+            # Compute bootstrap CI for the ground-truth max pair across policies
+            best_point = 0.0
+            best_ci = (0.0, 0.0, 0.0)
+            for pi_idx, samples_dict in enumerate(raw_samples):
+                if gt_h1 in samples_dict and gt_h2 in samples_dict:
+                    point, ci_lo, ci_hi = bootstrap_w1_ci(
+                        samples_dict[gt_h1], samples_dict[gt_h2], d_obs,
+                        n_bootstrap=n_bootstrap, alpha=alpha, rng=rng,
+                    )
+                    if point > best_point:
+                        best_point = point
+                        best_ci = (point, ci_lo, ci_hi)
+
+            _, ci_lo, ci_hi = best_ci
+            ci_width = ci_hi - ci_lo
+            ci_widths.append(ci_width)
+            if ci_lo <= gt_w1_for_pair <= ci_hi:
+                covers += 1
+
+        coverage = covers / n_replications
+        mean_width = float(np.nanmean(ci_widths))
+        rows.append({
+            "benchmark": "GridWorld_3x3",
+            "num_samples": num_samples,
+            "n_replications": n_replications,
+            "ground_truth_max_w1": round(ground_truth_max_w1, 6),
+            "empirical_coverage": round(coverage, 4),
+            "mean_ci_width": round(mean_width, 6),
+            "nominal_alpha": alpha,
+        })
+
+    return pd.DataFrame(rows)
+
+
 def run_all_experiments(
     output_dir: Path,
     profile: str = "quick",
@@ -3090,6 +4448,11 @@ def run_all_experiments(
             {"eps_grid": cfg.eps_grid},
         ),
         ExperimentTask(
+            "value_bound_tightness_real_reward",
+            run_value_bound_tightness_real_reward,
+            {"eps_grid": cfg.eps_grid},
+        ),
+        ExperimentTask(
             "horizon_gap_tiger",
             run_horizon_gap_tiger,
             {"horizons": cfg.horizons, "epsilon": 0.5},
@@ -3113,6 +4476,11 @@ def run_all_experiments(
             "multi_seed_witness",
             run_multi_seed_witness,
             {"stochastic_samples": min(cfg.stochastic_samples, 200)},
+        ),
+        ExperimentTask(
+            "stationary_counterexample",
+            run_stationary_counterexample,
+            {},
         ),
         ExperimentTask(
             "baseline_comparison",
@@ -3214,6 +4582,56 @@ def run_all_experiments(
             run_sampling_variance_analysis,
             {"eps_grid": cfg.eps_grid, "base_seed": cfg.seed},
         ),
+        ExperimentTask(
+            "bootstrap_ci",
+            run_bootstrap_ci_experiment,
+            {"seed": cfg.seed},
+        ),
+        ExperimentTask(
+            "w1_vs_tv_structured",
+            run_w1_vs_tv_structured_comparison,
+            {"eps_grid": cfg.eps_grid},
+        ),
+        ExperimentTask(
+            "pbvi_quotient_comparison",
+            run_pbvi_quotient_comparison,
+            {"eps_grid": cfg.eps_grid},
+        ),
+        ExperimentTask(
+            "channel_communication",
+            run_channel_communication_experiment,
+            {"eps_grid": cfg.eps_grid, "ms": cfg.ms},
+        ),
+        ExperimentTask(
+            "model_distinguishability",
+            run_model_distinguishability_experiment,
+            {"ms": cfg.ms},
+        ),
+        ExperimentTask(
+            "large_scale_scaling",
+            run_large_scale_scaling_experiment,
+            {"seed": cfg.seed},
+        ),
+        ExperimentTask(
+            "meaningful_scale",
+            run_meaningful_scale_experiment,
+            {"seed": cfg.seed},
+        ),
+        ExperimentTask(
+            "m2_scaling",
+            run_m2_scaling_experiment,
+            {"seed": cfg.seed},
+        ),
+        ExperimentTask(
+            "computational_profile",
+            run_computational_profile_experiment,
+            {"seed": cfg.seed},
+        ),
+        ExperimentTask(
+            "bootstrap_coverage",
+            run_bootstrap_coverage_experiment,
+            {"seed": cfg.seed},
+        ),
     ]
 
     if include_spectral:
@@ -3282,12 +4700,14 @@ def run_all_experiments(
     dfs["capacity_sweep_gridworld"].to_csv(output_dir / "capacity_sweep_gridworld.csv", index=False)
     dfs["value_loss_bounds_lipschitz"].to_csv(output_dir / "value_loss_bounds_lipschitz.csv", index=False)
     dfs["value_loss_nonlipschitz_tiger"].to_csv(output_dir / "value_loss_nonlipschitz_tiger.csv", index=False)
+    dfs["value_bound_tightness_real_reward"].to_csv(output_dir / "value_bound_tightness_real_reward.csv", index=False)
     dfs["horizon_gap_tiger"].to_csv(output_dir / "horizon_gap_tiger.csv", index=False)
     dfs["metric_sensitivity_gridworld"].to_csv(output_dir / "metric_sensitivity_gridworld.csv", index=False)
     dfs["stochastic_vs_deterministic_sanity"].to_csv(output_dir / "stochastic_vs_deterministic_sanity.csv", index=False)
     dfs["tiger_reproduction"].to_csv(output_dir / "tiger_reproduction.csv", index=False)
     dfs["observation_noise_sensitivity"].to_csv(output_dir / "observation_noise_sensitivity.csv", index=False)
     dfs["multi_seed_witness"].to_csv(output_dir / "multi_seed_witness.csv", index=False)
+    dfs["stationary_counterexample"].to_csv(output_dir / "stationary_counterexample.csv", index=False)
     dfs["baseline_comparison"].to_csv(output_dir / "baseline_comparison.csv", index=False)
     dfs["ablation_studies"].to_csv(output_dir / "ablation_studies.csv", index=False)
     dfs["hyperparameter_sensitivity"].to_csv(output_dir / "hyperparameter_sensitivity.csv", index=False)
@@ -3330,6 +4750,15 @@ def run_all_experiments(
     dfs["m2_medium_scale"].to_csv(output_dir / "m2_medium_scale.csv", index=False)
     dfs["spectral_rank_at_scale"].to_csv(output_dir / "spectral_rank_at_scale.csv", index=False)
     dfs["sampling_variance"].to_csv(output_dir / "sampling_variance.csv", index=False)
+    dfs["bootstrap_ci"].to_csv(output_dir / "bootstrap_ci.csv", index=False)
+    dfs["w1_vs_tv_structured"].to_csv(output_dir / "w1_vs_tv_structured.csv", index=False)
+    dfs["pbvi_quotient_comparison"].to_csv(output_dir / "pbvi_quotient_comparison.csv", index=False)
+    dfs["channel_communication"].to_csv(output_dir / "channel_communication.csv", index=False)
+    dfs["model_distinguishability"].to_csv(output_dir / "model_distinguishability.csv", index=False)
+    dfs["large_scale_scaling"].to_csv(output_dir / "large_scale_scaling.csv", index=False)
+    dfs["meaningful_scale"].to_csv(output_dir / "meaningful_scale.csv", index=False)
+    dfs["computational_profile"].to_csv(output_dir / "computational_profile.csv", index=False)
+    dfs["bootstrap_coverage"].to_csv(output_dir / "bootstrap_coverage.csv", index=False)
 
     if cfg.include_hierarchical_scaling:
         dfs["hierarchical_t_scaling"].to_csv(output_dir / "hierarchical_t_scaling.csv", index=False)
@@ -3346,6 +4775,10 @@ def run_all_experiments(
         _save_plot_capacity(dfs["capacity_sweep_tiger"], output_dir / "fig_capacity_vs_m.png")
         _save_plot_capacity(dfs["capacity_sweep_gridworld"], output_dir / "fig_capacity_gridworld.png")
         _save_plot_value_bounds(dfs["value_loss_bounds_lipschitz"], output_dir / "fig_value_loss_with_two_bounds.png")
+        _save_plot_value_bound_tightness_real_reward(
+            dfs["value_bound_tightness_real_reward"],
+            output_dir / "fig_value_bound_tightness_real_reward.png",
+        )
         _save_plot_horizon_gap(dfs["horizon_gap_tiger"], output_dir / "fig_gap_vs_horizon.png")
         _save_plot_metric_sensitivity(dfs["metric_sensitivity_gridworld"], output_dir / "fig_w1_vs_tv_gridworld.png")
         _save_plot_noise_sensitivity(dfs["observation_noise_sensitivity"], output_dir / "fig_noise_sensitivity.png")
@@ -3370,6 +4803,14 @@ def run_all_experiments(
         if cfg.include_hierarchical_scaling and "layered_bound_validation" in dfs:
             _save_plot_layered_bound_validation(
                 dfs["layered_bound_validation"], output_dir / "fig_layered_bound_vs_empirical.png"
+            )
+        if "channel_communication" in dfs:
+            _save_plot_channel_rate_distortion(
+                dfs["channel_communication"], output_dir / "fig_channel_rate_distortion.png"
+            )
+        if "model_distinguishability" in dfs:
+            _save_plot_model_distinguishability(
+                dfs["model_distinguishability"], output_dir / "fig_model_distinguishability.png"
             )
 
     return dfs

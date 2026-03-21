@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+title: "pomdp-quotient: Minimal POMDP abstraction via agent-bounded indistinguishability"
+message: "If you use this software, please cite it using the metadata below."
+type: software
+authors:
+  - family-names: "Nixon"
+    given-names: "Anthony T"
+    orcid: "https://orcid.org/0000-0002-0289-0954"
+repository-code: "https://github.com/alch3mistdev/pomdp-quotient"
+abstract: >
+  Partition refinement algorithm for constructing the minimal POMDP quotient
+  Q_{m,T}(M) under agent-bounded indistinguishability. Two observation histories
+  are equivalent when no finite-state controller with at most m nodes can
+  distinguish them over a horizon T. Includes closed-loop pseudometric
+  computation, epsilon-quotient approximation, and compositional wrapper support.
+keywords:
+  - POMDP
+  - model minimization
+  - bounded rationality
+  - finite-state controllers
+  - bisimulation
+  - reinforcement learning
+  - partial observability
+license: MIT
+version: "0.1.1"
+date-released: "2026-03-18"
+
+preferred-citation:
+  type: article
+  title: "Finite-POMDP abstraction via agent-bounded indistinguishability: A Bounded-Interaction Myhill--Nerode Theorem"
+  authors:
+    - family-names: "Nixon"
+      given-names: "Anthony T"
+      orcid: "https://orcid.org/0000-0002-0289-0954"
+  year: 2026
+  url: "https://github.com/alch3mistdev/pomdp-quotient"

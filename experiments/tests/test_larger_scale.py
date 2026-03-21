@@ -539,3 +539,52 @@ def test_sampling_variance_bounded() -> None:
         counts.append(part.num_classes_total)
     std = float(np.std(counts))
     assert std <= 3.0, f"Class count std too high: {std} (counts={counts})"
+
+
+def test_bootstrap_ci() -> None:
+    """Verify bootstrap CI contains point estimate and narrows with more samples."""
+    from experiments.sampling import bootstrap_w1_ci, sample_future_observations
+
+    pomdp = tiger_full_actions_pomdp()
+    d_obs = tiger_discrete_observation_metric()
+    policies = enumerate_deterministic_fscs(
+        num_actions=pomdp.num_actions,
+        num_observations=pomdp.num_observations,
+        max_nodes=1,
+        include_smaller=True,
+    )
+    rng = np.random.default_rng(42)
+    h1, h2 = (0,), (1,)
+    samples_h1 = sample_future_observations(pomdp, policies[0], h1, 2, 200, rng)
+    samples_h2 = sample_future_observations(pomdp, policies[0], h2, 2, 200, rng)
+
+    point, ci_lo, ci_hi = bootstrap_w1_ci(
+        samples_h1, samples_h2, d_obs, n_bootstrap=500, rng=rng,
+    )
+    # CI should contain the point estimate
+    assert ci_lo <= point <= ci_hi
+    # CI should have positive width
+    assert ci_hi > ci_lo
+
+    # More samples should give narrower CI
+    samples_h1_big = sample_future_observations(pomdp, policies[0], h1, 2, 1000, rng)
+    samples_h2_big = sample_future_observations(pomdp, policies[0], h2, 2, 1000, rng)
+    _, ci_lo2, ci_hi2 = bootstrap_w1_ci(
+        samples_h1_big, samples_h2_big, d_obs, n_bootstrap=500, rng=rng,
+    )
+    # Wider samples should produce tighter or comparable CI
+    # (not guaranteed with different random draws, so use generous margin)
+    assert (ci_hi2 - ci_lo2) < (ci_hi - ci_lo) * 3.0
+
+
+def test_bootstrap_coverage_runs() -> None:
+    """Validate bootstrap coverage experiment runs and produces valid output."""
+    from experiments.analysis import run_bootstrap_coverage_experiment
+
+    df = run_bootstrap_coverage_experiment(seed=42, n_replications=10)
+    assert len(df) >= 3
+    assert "empirical_coverage" in df.columns
+    assert (df["empirical_coverage"] >= 0.0).all()
+    assert (df["empirical_coverage"] <= 1.0).all()
+    assert "mean_ci_width" in df.columns
+    assert "ground_truth_max_w1" in df.columns

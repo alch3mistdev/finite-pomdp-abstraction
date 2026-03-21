@@ -1,0 +1,13 @@
+\begin{tabular}{llrrrrrp{3.2cm}rrr}
+\toprule
+Benchmark & Reward & $T$ & Hist. & Cls. & $t_{\mathrm{orig}}$ & $t_{Q^{\mathrm{clk}}}$ & Policy & $V_{\mathrm{orig}}$ & $V_{Q^{\mathrm{clk}}\rightarrow M}$ & Regret\\
+\midrule
+Tiger & Tiger reward & 2 & 7 & 4 & 0.000 & 0.000 & L L & -2.000 & -2.000 & 0.000\\
+Tiger & Tiger reward & 4 & 31 & 16 & 0.000 & 0.010 & L L L L & -4.000 & -4.000 & 0.000\\
+Tiger & Tiger reward & 6 & 127 & 64 & 0.005 & 0.396 & L L L L L L & -6.000 & -6.000 & 0.000\\
+Tiger & Tiger reward & 8 & 511 & 256 & 0.061 & 20.170 & L L L L L L L L & -8.000 & -8.000 & 0.000\\
+Tiger & Tiger reward & 10 & 2047 & 1024 & 0.681 & 1688.184 & L L L L L L L L L L & -10.000 & -10.000 & 0.000\\
+GridWorld 3x3 & Goal reward & 2 & 21 & 6 & 0.002 & 0.002 & D U & 0.311 & 0.311 & 0.000\\
+GridWorld 3x3 & Goal reward & 3 & 85 & 22 & 0.001 & 0.022 & D R U & 0.671 & 0.671 & 0.000\\
+\bottomrule
+\end{tabular}

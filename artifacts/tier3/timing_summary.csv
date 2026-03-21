@@ -1,0 +1,10 @@
+tier,artifact,benchmark,runtime_seconds_reported,source_table,note
+Tier III,meaningful_scale.csv,Net. Mon. (n=12),~5,tab:meaningful-scale,reported row runtime
+Tier III,meaningful_scale.csv,Random (|O|=10),~30,tab:meaningful-scale,reported row runtime
+Tier III,meaningful_scale.csv,Net. Mon. (n=10),~25,tab:meaningful-scale,reported row runtime
+Tier III,m2_medium_scale.csv,"RockSample(4,4) m=2",321,tab:m2-scaling,reported row runtime
+Tier III,m2_medium_scale.csv,Net. Mon. (n=4) m=2,353,tab:m2-scaling,reported row runtime
+Tier III,m2_medium_scale.csv,Net. Mon. (n=9) m=2,6802,tab:m2-scaling,reported row runtime
+Tier III,computational_profile.csv,Tiger,0.004,tab:computational-profile,distance-cache time
+Tier III,computational_profile.csv,GridWorld 3x3,0.034,tab:computational-profile,distance-cache time
+Tier III,computational_profile.csv,"RockSample(4,4)",0.472,tab:computational-profile,distance-cache time

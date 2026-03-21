@@ -267,6 +267,19 @@ def greedy_select_fscs(cache: SpectralCache, k: int) -> List[int]:
     return selected
 
 
+def subset_probe_gap_sup(cache: SpectralCache, fsc_indices: Sequence[int]) -> float:
+    """Maximum probe-envelope gap between the full FSC set and a selected subset."""
+    probe_gap = 0.0
+    for depth, tensor in cache.per_fsc_distances.items():
+        full_envelope = tensor.max(axis=2)
+        if fsc_indices:
+            subset_envelope = tensor[:, :, list(fsc_indices)].max(axis=2)
+        else:
+            subset_envelope = np.zeros_like(full_envelope)
+        probe_gap = max(probe_gap, float(np.max(full_envelope - subset_envelope)))
+    return probe_gap
+
+
 def approximate_partition_from_subset(
     cache: SpectralCache,
     fsc_indices: List[int],

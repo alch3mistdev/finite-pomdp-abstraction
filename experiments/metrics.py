@@ -7,6 +7,7 @@ from typing import Dict, Mapping, Sequence, Tuple
 
 import numpy as np
 from scipy.optimize import linprog
+from scipy.sparse import csr_matrix
 
 from .pomdp_core import ObsSeq, observation_metric_sum
 
@@ -39,19 +40,24 @@ def _as_dense_vectors(
 
 
 @lru_cache(maxsize=128)
-def _transport_constraints(n_left: int, n_right: int) -> Tuple[np.ndarray, np.ndarray]:
+def _transport_constraints(n_left: int, n_right: int) -> Tuple[csr_matrix, Tuple[Tuple[float, None], ...]]:
     num_vars = n_left * n_right
-    a_eq = []
+    rows = []
+    cols = []
+    data = []
     for i in range(n_left):
-        row = np.zeros(num_vars, dtype=float)
-        row[i * n_right : (i + 1) * n_right] = 1.0
-        a_eq.append(row)
+        base = i * n_right
+        for j in range(n_right):
+            rows.append(i)
+            cols.append(base + j)
+            data.append(1.0)
     for j in range(n_right):
-        row = np.zeros(num_vars, dtype=float)
-        row[j::n_right] = 1.0
-        a_eq.append(row)
-    a_eq = np.array(a_eq, dtype=float)
-    bounds = np.array([(0.0, None)] * num_vars, dtype=object)
+        for i in range(n_left):
+            rows.append(n_left + j)
+            cols.append(i * n_right + j)
+            data.append(1.0)
+    a_eq = csr_matrix((data, (rows, cols)), shape=(n_left + n_right, num_vars), dtype=float)
+    bounds = tuple((0.0, None) for _ in range(num_vars))
     return a_eq, bounds
 
 
@@ -81,6 +87,20 @@ def wasserstein_distance(
     for i, seq_i in enumerate(keys_p):
         for j, seq_j in enumerate(keys_q):
             cost[i, j] = observation_metric_sum(seq_i, seq_j, d_obs)
+
+    return transport_lp_value(pv, qv, cost)
+
+
+def transport_lp_value(
+    pv: np.ndarray,
+    qv: np.ndarray,
+    cost: np.ndarray,
+) -> float:
+    n_left, n_right = cost.shape
+    if n_left == 0 or n_right == 0:
+        return 0.0
+    if n_left == 1 and n_right == 1:
+        return float(cost[0, 0])
 
     c = cost.reshape(-1)
     a_eq, bounds = _transport_constraints(n_left, n_right)

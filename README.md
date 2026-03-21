@@ -24,7 +24,23 @@ source .venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 ```
 
-## Reproducing All Results
+## Reproduction Contract
+
+Results are organized into three tiers of reproducibility:
+
+### Tier I: Theory-First Tables (Tables 1-3)
+
+Exact closed-form computations with no randomness. Generates the paper's theory tables directly:
+
+```bash
+python paper/generate_theory_first_tables.py
+```
+
+Output: `paper/generated/table_*.tex` and `paper/generated/data/*.csv`
+
+### Tier II: Computational Experiments
+
+Full experiment suite via `run_basic_results`:
 
 **Quick profile** (~2 minutes):
 
@@ -41,6 +57,14 @@ python -m experiments.run_basic_results --profile extended --seed 7
 Output artifacts (CSV tables and PNG figures) are written to `experiments/results/basic/` by default. Use `--output-dir <path>` to change.
 
 Parallel execution is enabled by default. Use `--no-parallel` for serial runs, `--workers N` for a fixed worker count, or `--worker-fraction F` (default `0.5`) for automatic worker sizing.
+
+### Tier III: Precomputed Artifacts
+
+Large-scale results that require extended compute time are provided as precomputed artifacts in `artifacts/tier3/`. Verify integrity with:
+
+```bash
+python artifacts/tier3/verify_tier3_artifacts.py
+```
 
 ### Long-Horizon Scaling
 
@@ -72,6 +96,20 @@ PYTEST_WORKERS=4 pytest -v experiments/tests/
 pytest -v experiments/tests/test_basic_results.py
 ```
 
+### Test Suites
+
+| File | Coverage |
+|------|----------|
+| `test_basic_results.py` | Core experiments: tiger reproduction, capacity sweeps, value bounds, stationary counterexample |
+| `test_larger_scale.py` | Medium/large scale experiments, bootstrap CI/coverage |
+| `test_spectral.py` | Spectral approximation, probe-gap, recovery |
+| `test_theory_first_tables.py` | Tier I theory table verification |
+| `test_cross_domain.py` | Channel communication, model distinguishability |
+| `test_meaningful_scale.py` | Large state-space experiments |
+| `test_new_experiments.py` | RockSample, PBVI comparison |
+| `test_baselines.py` | Baseline method correctness |
+| `test_hierarchical_scaling.py` | Long-horizon hierarchical scaling |
+
 ## Output Artifacts
 
 | File | Description |
@@ -80,6 +118,8 @@ pytest -v experiments/tests/test_basic_results.py
 | `capacity_sweep_tiger.csv` | Class count vs memory bound and epsilon |
 | `value_loss_bounds_lipschitz.csv` | Empirical value error vs theoretical bounds |
 | `value_loss_nonlipschitz_tiger.csv` | Value error under non-Lipschitz reward |
+| `value_bound_tightness_real_reward.csv` | Value-bound tightness under real reward |
+| `stationary_counterexample.csv` | Stationary-policy counterexample data |
 | `horizon_gap_tiger.csv` | Bound gap growth with horizon |
 | `metric_sensitivity_gridworld.csv` | W1 vs TV class counts on GridWorld |
 | `stochastic_vs_deterministic_sanity.csv` | Witness theorem validation |
@@ -115,22 +155,24 @@ pytest -v experiments/tests/test_basic_results.py
 ## Architecture
 
 ```
-pomdp_core.py          Core POMDP and FSC data structures
+pomdp_core.py              Core POMDP and FSC data structures
     |
-metrics.py             TV and Wasserstein distance computation
-benchmarks.py          Tiger, GridWorld, network monitoring POMDPs
-fsc_enum.py            Deterministic/stochastic FSC enumeration
-sampling.py            Monte Carlo trajectory sampling
+metrics.py                 TV and Wasserstein distance computation
+benchmarks.py              Tiger, GridWorld, network monitoring, RockSample POMDPs
+fsc_enum.py                Deterministic/stochastic/clock-aware FSC enumeration
+sampling.py                Monte Carlo trajectory sampling + bootstrap CI
     |
-quotient.py            History partitioning and quotient construction
-clustering.py          Complete-linkage and optimal partitioning
-spectral.py            SVD-based spectral approximation
-baselines.py           Truncation, random, belief-distance baselines
+quotient.py                History partitioning and quotient construction
+clustering.py              Complete-linkage and optimal partitioning
+spectral.py                SVD-based spectral approximation + probe-gap analysis
+baselines.py               Truncation, random, belief-distance baselines
     |
-hierarchical.py        Long-horizon layered scaling
-analysis.py            Experiment orchestration and plotting
+exact_clock_aware.py       Clock-aware exact sufficiency engine (Tier I tables)
+theory_first_tables.py     Theory-first table generation + LaTeX rendering
+hierarchical.py            Long-horizon layered scaling
+analysis.py                Experiment orchestration and plotting
     |
-run_basic_results.py   CLI entrypoint
+run_basic_results.py       CLI entrypoint
 ```
 
 ### Key Abstractions
@@ -153,6 +195,8 @@ run_basic_results.py   CLI entrypoint
 The `reference_results/` directory contains the exact CSV data and PNG figures used in the paper, generated with `--profile extended --seed 7`. You can compare your generated results against these to verify reproducibility.
 
 ## Citation
+
+If you use this software, please cite it as described in [CITATION.cff](CITATION.cff).
 
 ```bibtex
 @article{nixon2026finite,

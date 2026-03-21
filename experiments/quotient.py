@@ -330,3 +330,25 @@ def d_m_t_between_original_and_quotient(
         d = distribution_distance(p_m, p_q, mode=distance_mode, d_obs=d_obs)
         dmax = max(dmax, d)
     return dmax
+
+
+def d_m_t_between_two_pomdps(
+    pomdp1: FinitePOMDP,
+    pomdp2: FinitePOMDP,
+    policies: Sequence[DeterministicFSC],
+    horizon: int,
+    distance_mode: str,
+    d_obs: np.ndarray,
+) -> float:
+    """Behavioural distance between two POMDPs sharing the same (A, O).
+
+    For each policy, computes the full trajectory observation distribution
+    on both POMDPs and takes the max distance over all policies.
+    """
+    dmax = 0.0
+    for policy in policies:
+        p1 = trajectory_observation_distribution(pomdp=pomdp1, policy=policy, horizon=horizon)
+        p2 = trajectory_observation_distribution(pomdp=pomdp2, policy=policy, horizon=horizon)
+        d = distribution_distance(p1, p2, mode=distance_mode, d_obs=d_obs)
+        dmax = max(dmax, d)
+    return dmax

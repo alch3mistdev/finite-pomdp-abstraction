@@ -11,6 +11,7 @@ from experiments.analysis import (
     run_baseline_comparison,
     run_capacity_sweep_tiger,
     run_clustering_optimality_check,
+    run_computational_profile_experiment,
     run_data_processing_experiment,
     run_gridworld_metric_sensitivity,
     run_hyperparameter_sensitivity,
@@ -22,7 +23,9 @@ from experiments.analysis import (
     run_observation_noise_sensitivity,
     run_observation_sensitivity_experiment,
     run_planning_speedup_experiment,
+    run_stationary_counterexample,
     tiger_reproduction_sanity,
+    run_value_bound_tightness_real_reward,
 )
 
 
@@ -108,6 +111,18 @@ def test_nonlipschitz_track_presence() -> None:
     assert "hypothetical_bound_l_r_110" in df.columns
 
 
+def test_real_reward_tightness_track() -> None:
+    df = run_value_bound_tightness_real_reward(eps_grid=[0.0, 0.3, 0.5, 0.6])
+    assert "benchmark_source" in df.columns
+    assert "tightness_ratio" in df.columns
+    assert "selected_for_paper" in df.columns
+    assert "selected_max_ratio" in df.columns
+    selected = df[df["selected_for_paper"]]
+    assert len(selected) > 0
+    assert float(selected["selected_max_ratio"].iloc[0]) >= 0.5 - 1e-12
+    assert (selected["selected_max_ratio"] >= 0.5 - 1e-12).all()
+
+
 def test_w1_vs_tv_sensitivity() -> None:
     eps = [0.0, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]
     df = run_gridworld_metric_sensitivity(eps_grid=eps)
@@ -130,6 +145,16 @@ def test_multi_seed_witness() -> None:
     assert "max_distance_stochastic" in df.columns
     # No stochastic should exceed deterministic
     assert (df["stochastic_exceeds_det"] == 0.0).all()
+
+
+def test_stationary_counterexample() -> None:
+    df = run_stationary_counterexample()
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["max_distance_deterministic"] == pytest_approx(0.0, 1e-12)
+    assert row["stochastic_half_half_distance"] == pytest_approx(0.25, 1e-12)
+    assert row["witness_gap"] == pytest_approx(0.25, 1e-12)
+    assert not bool(row["deterministic_stationary_suffices"])
 
 
 def test_baseline_comparison() -> None:
@@ -246,6 +271,22 @@ def test_planning_speedup() -> None:
     assert (df["value_gap"] >= -1e-9).all()  # quotient-best should not exceed original-best
 
 
+def test_computational_profile_structure() -> None:
+    df = run_computational_profile_experiment(seed=42)
+    assert len(df) >= 3
+    required_cols = [
+        "benchmark", "num_states", "m", "T", "num_fscs", "num_history_pairs",
+        "w1_lp_count", "fsc_enum_s", "distance_cache_s", "clustering_s",
+        "total_s", "pct_fsc_enum", "pct_distance_cache", "pct_clustering",
+    ]
+    for col in required_cols:
+        assert col in df.columns, f"Missing column: {col}"
+    # Percentages should sum to ~100 for each row
+    for _, row in df.iterrows():
+        pct_sum = row["pct_fsc_enum"] + row["pct_distance_cache"] + row["pct_clustering"]
+        assert abs(pct_sum - 100.0) < 1.0, f"Percentages sum to {pct_sum}, expected ~100"
+
+
 def test_end_to_end_smoke(tmp_path: Path) -> None:
     out = tmp_path / "basic"
     run_all_experiments(
@@ -264,9 +305,11 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
         "capacity_sweep_tiger.csv",
         "value_loss_bounds_lipschitz.csv",
         "value_loss_nonlipschitz_tiger.csv",
+        "value_bound_tightness_real_reward.csv",
         "horizon_gap_tiger.csv",
         "metric_sensitivity_gridworld.csv",
         "stochastic_vs_deterministic_sanity.csv",
+        "stationary_counterexample.csv",
         "observation_noise_sensitivity.csv",
         "multi_seed_witness.csv",
         "baseline_comparison.csv",
@@ -280,6 +323,7 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
         "timing_summary.csv",
         "fig_capacity_vs_m.png",
         "fig_value_loss_with_two_bounds.png",
+        "fig_value_bound_tightness_real_reward.png",
         "fig_gap_vs_horizon.png",
         "fig_w1_vs_tv_gridworld.png",
         "fig_noise_sensitivity.png",

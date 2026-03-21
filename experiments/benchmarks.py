@@ -215,6 +215,181 @@ def compute_reward_lipschitz_constant(pomdp: FinitePOMDP) -> float:
     return float(pomdp.rewards.max() - pomdp.rewards.min())
 
 
+def observation_reward_lipschitz_constant(
+    observation_reward: np.ndarray,
+    d_obs: np.ndarray,
+) -> float:
+    """Exact Lipschitz constant of an observation-aligned reward map."""
+    obs_reward = np.asarray(observation_reward, dtype=float)
+    if obs_reward.ndim != 1:
+        raise ValueError("observation_reward must be a 1D array")
+    if d_obs.shape != (obs_reward.size, obs_reward.size):
+        raise ValueError("d_obs must match the observation reward dimension")
+
+    lipschitz = 0.0
+    for i in range(obs_reward.size):
+        for j in range(obs_reward.size):
+            dist = float(d_obs[i, j])
+            if dist <= 0.0:
+                continue
+            lipschitz = max(lipschitz, abs(float(obs_reward[i] - obs_reward[j])) / dist)
+    return float(lipschitz)
+
+
+def observation_aligned_reward_pomdp(
+    pomdp: FinitePOMDP,
+    observation_reward: Sequence[float],
+) -> FinitePOMDP:
+    """Lift an observation score r(o) to R(s,a)=E[r(O_{t+1}) | s_t=s, a_t=a]."""
+    obs_reward = np.asarray(observation_reward, dtype=float)
+    if obs_reward.shape != (pomdp.num_observations,):
+        raise ValueError("observation_reward must have one entry per observation")
+
+    rewards = np.einsum("sat,tao,o->sa", pomdp.transition, pomdp.observation, obs_reward)
+    return FinitePOMDP(
+        state_names=pomdp.state_names,
+        action_names=pomdp.action_names,
+        observation_names=pomdp.observation_names,
+        transition=pomdp.transition,
+        observation=pomdp.observation,
+        rewards=rewards,
+        initial_belief=pomdp.initial_belief,
+    )
+
+
+def stationary_counterexample_pomdp() -> FinitePOMDP:
+    """Counterexample where stochastic stationary FSCs beat deterministic ones.
+
+    The construction realises the witness-gap example used in the paper:
+    deterministic 1-node stationary FSCs cannot distinguish histories L and R,
+    while a stochastic 1-node FSC with alpha(A)=alpha(B)=1/2 does.
+    """
+    states = ("p_L", "p_R", "x_0", "y_0", "x_1", "y_1", "dead_u", "dead_x", "dead_y")
+    actions = ("A", "B")
+    observations = ("L", "R", "U", "X", "Y")
+
+    num_s, num_a, num_o = len(states), len(actions), len(observations)
+    s_idx = {state: i for i, state in enumerate(states)}
+    o_idx = {obs: i for i, obs in enumerate(observations)}
+
+    transition = np.zeros((num_s, num_a, num_s), dtype=float)
+    observation = np.zeros((num_s, num_a, num_o), dtype=float)
+
+    # Terminal states collapse to an uninformative absorbing observation.
+    for terminal in ("dead_u", "dead_x", "dead_y"):
+        for action in range(num_a):
+            transition[s_idx[terminal], action, s_idx["dead_u"]] = 1.0
+            observation[s_idx["dead_u"], action, o_idx["U"]] = 1.0
+
+    # Prefix states emit L/R, independent of the chosen stationary action.
+    for action in range(num_a):
+        transition[s_idx["p_L"], action, s_idx["x_0"]] = 1.0
+        observation[s_idx["x_0"], action, o_idx["L"]] = 1.0
+
+        transition[s_idx["p_R"], action, s_idx["y_0"]] = 1.0
+        observation[s_idx["y_0"], action, o_idx["R"]] = 1.0
+
+    # Action A advances to x_1/y_1 with the same uninformative symbol U.
+    transition[s_idx["x_0"], 0, s_idx["x_1"]] = 1.0
+    observation[s_idx["x_1"], 0, o_idx["U"]] = 1.0
+    transition[s_idx["y_0"], 0, s_idx["y_1"]] = 1.0
+    observation[s_idx["y_1"], 0, o_idx["U"]] = 1.0
+
+    # Action B kills immediately with the same U symbol from either branch.
+    transition[s_idx["x_0"], 1, s_idx["dead_u"]] = 1.0
+    observation[s_idx["dead_u"], 1, o_idx["U"]] = 1.0
+    transition[s_idx["y_0"], 1, s_idx["dead_u"]] = 1.0
+    observation[s_idx["dead_u"], 1, o_idx["U"]] = 1.0
+
+    # The second B action reveals the latent branch; A remains uninformative.
+    transition[s_idx["x_1"], 0, s_idx["dead_u"]] = 1.0
+    observation[s_idx["dead_u"], 0, o_idx["U"]] = 1.0
+    transition[s_idx["y_1"], 0, s_idx["dead_u"]] = 1.0
+    observation[s_idx["dead_u"], 0, o_idx["U"]] = 1.0
+
+    transition[s_idx["x_1"], 1, s_idx["dead_x"]] = 1.0
+    observation[s_idx["dead_x"], 1, o_idx["X"]] = 1.0
+    transition[s_idx["y_1"], 1, s_idx["dead_y"]] = 1.0
+    observation[s_idx["dead_y"], 1, o_idx["Y"]] = 1.0
+
+    rewards = np.zeros((num_s, num_a), dtype=float)
+    initial_belief = np.zeros(num_s, dtype=float)
+    initial_belief[s_idx["p_L"]] = 0.5
+    initial_belief[s_idx["p_R"]] = 0.5
+
+    return FinitePOMDP(
+        state_names=states,
+        action_names=actions,
+        observation_names=observations,
+        transition=transition,
+        observation=observation,
+        rewards=rewards,
+        initial_belief=initial_belief,
+    )
+
+
+def inspection_choice_pomdp() -> FinitePOMDP:
+    """Small exact benchmark used for the real-reward bound-tightness track.
+
+    Action ``inspect`` exposes a hint and then succeeds/fails depending on the
+    latent mode; action ``skip`` neutralises the second-step outcome.  The setup
+    yields an exact same-policy value/bound ratio of 1/2 at epsilon=1.
+    """
+    states = ("root", "left_mode", "right_mode", "success", "failure", "neutral")
+    actions = ("inspect", "skip")
+    observations = ("left_hint", "right_hint", "success", "failure", "neutral")
+
+    num_s, num_a, num_o = len(states), len(actions), len(observations)
+    s_idx = {state: i for i, state in enumerate(states)}
+    o_idx = {obs: i for i, obs in enumerate(observations)}
+
+    transition = np.zeros((num_s, num_a, num_s), dtype=float)
+    observation = np.zeros((num_s, num_a, num_o), dtype=float)
+
+    # Root action picks which latent mode is entered, making both depth-1
+    # histories reachable across the deterministic stationary probe family.
+    for action in range(num_a):
+        observation[s_idx["success"], action, o_idx["success"]] = 1.0
+        observation[s_idx["failure"], action, o_idx["failure"]] = 1.0
+        observation[s_idx["neutral"], action, o_idx["neutral"]] = 1.0
+
+    transition[s_idx["root"], 0, s_idx["left_mode"]] = 1.0
+    observation[s_idx["left_mode"], 0, o_idx["left_hint"]] = 1.0
+    transition[s_idx["root"], 1, s_idx["right_mode"]] = 1.0
+    observation[s_idx["right_mode"], 1, o_idx["right_hint"]] = 1.0
+
+    # If the same inspect action is repeated, the left branch succeeds while the
+    # right branch fails.  Skip makes the second step neutral from either hint.
+    transition[s_idx["left_mode"], 0, s_idx["success"]] = 1.0
+    observation[s_idx["success"], 0, o_idx["success"]] = 1.0
+    transition[s_idx["right_mode"], 0, s_idx["failure"]] = 1.0
+    observation[s_idx["failure"], 0, o_idx["failure"]] = 1.0
+
+    transition[s_idx["left_mode"], 1, s_idx["neutral"]] = 1.0
+    observation[s_idx["neutral"], 1, o_idx["neutral"]] = 1.0
+    transition[s_idx["right_mode"], 1, s_idx["neutral"]] = 1.0
+    observation[s_idx["neutral"], 1, o_idx["neutral"]] = 1.0
+
+    # Terminal states absorb.
+    for terminal in ("success", "failure", "neutral"):
+        for action in range(num_a):
+            transition[s_idx[terminal], action, s_idx[terminal]] = 1.0
+
+    rewards = np.zeros((num_s, num_a), dtype=float)
+    initial_belief = np.zeros(num_s, dtype=float)
+    initial_belief[s_idx["root"]] = 1.0
+
+    return FinitePOMDP(
+        state_names=states,
+        action_names=actions,
+        observation_names=observations,
+        transition=transition,
+        observation=observation,
+        rewards=rewards,
+        initial_belief=initial_belief,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Random structured POMDP
 # ---------------------------------------------------------------------------
@@ -559,6 +734,268 @@ def network_monitoring_pomdp(
         rewards=rewards,
         initial_belief=b0,
     )
+
+
+# ---------------------------------------------------------------------------
+# RockSample(4,4) POMDP
+# ---------------------------------------------------------------------------
+
+def rocksample_pomdp(
+    grid_size: int = 4,
+    rock_positions: Sequence[Tuple[int, int]] = ((0, 1), (1, 3), (2, 1), (3, 3)),
+    d_max: float | None = None,
+) -> FinitePOMDP:
+    """RockSample(4,4) with 257 states, 9 actions, 3 observations.
+
+    Parameters
+    ----------
+    grid_size : int
+        Side length of the square grid.
+    rock_positions : sequence of (row, col) pairs
+        Fixed positions of rocks on the grid.
+    d_max : float or None
+        Normalisation distance for check-sensor efficiency.
+        Defaults to ``grid_size * sqrt(2)``.
+
+    State encoding
+    --------------
+    State index = row * grid_size * 2^num_rocks + col * 2^num_rocks + rock_bits.
+    The last state (index = grid_size^2 * 2^num_rocks) is the absorbing terminal.
+
+    Actions: move_north, move_south, move_east, move_west, sample,
+             check_1, ..., check_num_rocks.
+
+    Observations: good, bad, none.
+    """
+    num_rocks = len(rock_positions)
+    num_configs = 1 << num_rocks  # 2^num_rocks
+    num_grid = grid_size * grid_size
+    num_non_terminal = num_grid * num_configs
+    num_s = num_non_terminal + 1  # +1 for terminal
+    terminal_idx = num_non_terminal
+
+    num_a = 5 + num_rocks  # 4 moves + sample + num_rocks checks
+    num_o = 3  # good, bad, none
+
+    if d_max is None:
+        d_max = grid_size * np.sqrt(2)
+
+    # --- helpers ---
+    def encode(row: int, col: int, rock_bits: int) -> int:
+        return (row * grid_size + col) * num_configs + rock_bits
+
+    def decode(s: int) -> Tuple[int, int, int]:
+        rock_bits = s % num_configs
+        pos = s // num_configs
+        row, col = divmod(pos, grid_size)
+        return row, col, rock_bits
+
+    def rock_is_good(rock_bits: int, rock_idx: int) -> bool:
+        return bool((rock_bits >> rock_idx) & 1)
+
+    def flip_rock(rock_bits: int, rock_idx: int) -> int:
+        return rock_bits & ~(1 << rock_idx)
+
+    def efficiency(dist: float) -> float:
+        return max(0.5, 1.0 - dist / d_max)
+
+    def manhattan(r1: int, c1: int, r2: int, c2: int) -> float:
+        return float(abs(r1 - r2) + abs(c1 - c2))
+
+    # Action indices
+    A_NORTH, A_SOUTH, A_EAST, A_WEST, A_SAMPLE = 0, 1, 2, 3, 4
+    # check_i = 5 + i
+
+    # Observation indices
+    O_GOOD, O_BAD, O_NONE = 0, 1, 2
+
+    # --- state / action / observation names ---
+    state_names: List[str] = []
+    for s in range(num_non_terminal):
+        row, col, rb = decode(s)
+        bits_str = format(rb, f"0{num_rocks}b")
+        state_names.append(f"r{row}c{col}_rocks{bits_str}")
+    state_names.append("terminal")
+
+    action_names: List[str] = [
+        "move_north", "move_south", "move_east", "move_west", "sample",
+    ]
+    for i in range(num_rocks):
+        action_names.append(f"check_{i + 1}")
+
+    observation_names = ("good", "bad", "none")
+
+    # --- allocate matrices ---
+    transition = np.zeros((num_s, num_a, num_s), dtype=float)
+    observation = np.zeros((num_s, num_a, num_o), dtype=float)
+    rewards = np.zeros((num_s, num_a), dtype=float)
+
+    # --- terminal state: absorbing, emits "none", reward 0 ---
+    for a in range(num_a):
+        transition[terminal_idx, a, terminal_idx] = 1.0
+        observation[terminal_idx, a, O_NONE] = 1.0
+
+    # --- non-terminal states ---
+    for s in range(num_non_terminal):
+        row, col, rock_bits = decode(s)
+
+        for a in range(num_a):
+            if a == A_NORTH:
+                new_row = max(0, row - 1)
+                s_next = encode(new_row, col, rock_bits)
+                transition[s, a, s_next] = 1.0
+                observation[s_next, a, O_NONE] += 0.0  # handled below
+            elif a == A_SOUTH:
+                new_row = min(grid_size - 1, row + 1)
+                s_next = encode(new_row, col, rock_bits)
+                transition[s, a, s_next] = 1.0
+            elif a == A_EAST:
+                if col == grid_size - 1:
+                    # Exit the grid -> terminal with +10 reward
+                    transition[s, a, terminal_idx] = 1.0
+                    rewards[s, a] = 10.0
+                else:
+                    s_next = encode(row, col + 1, rock_bits)
+                    transition[s, a, s_next] = 1.0
+            elif a == A_WEST:
+                new_col = max(0, col - 1)
+                s_next = encode(row, new_col, rock_bits)
+                transition[s, a, s_next] = 1.0
+            elif a == A_SAMPLE:
+                # Check if any rock is at this position
+                sampled = False
+                for ri in range(num_rocks):
+                    rr, rc = rock_positions[ri]
+                    if row == rr and col == rc:
+                        if rock_is_good(rock_bits, ri):
+                            rewards[s, a] = 10.0
+                        else:
+                            rewards[s, a] = -10.0
+                        # Flip rock bit to bad after sampling
+                        new_bits = flip_rock(rock_bits, ri)
+                        s_next = encode(row, col, new_bits)
+                        transition[s, a, s_next] = 1.0
+                        sampled = True
+                        break
+                if not sampled:
+                    # No rock here: sample does nothing, -10 penalty (bad sample)
+                    rewards[s, a] = -10.0
+                    transition[s, a, s] = 1.0
+            else:
+                # check_i action (a >= 5)
+                ri = a - 5
+                # Agent stays in place
+                transition[s, a, s] = 1.0
+
+    # --- observation matrix for non-terminal states ---
+    # Movement and sample actions always emit "none".
+    # Check actions emit based on sensor efficiency.
+    for s_next in range(num_non_terminal):
+        row, col, rock_bits = decode(s_next)
+        for a in range(num_a):
+            if a < 5:
+                # Movement or sample -> emit "none"
+                observation[s_next, a, O_NONE] = 1.0
+            else:
+                # Check action
+                ri = a - 5
+                rr, rc = rock_positions[ri]
+                dist = manhattan(row, col, rr, rc)
+                eff = efficiency(dist)
+                if rock_is_good(rock_bits, ri):
+                    observation[s_next, a, O_GOOD] = eff
+                    observation[s_next, a, O_BAD] = 1.0 - eff
+                else:
+                    observation[s_next, a, O_GOOD] = 1.0 - eff
+                    observation[s_next, a, O_BAD] = eff
+
+    # --- initial belief: uniform over agent at (0,0) with all rock configs ---
+    initial_belief = np.zeros(num_s, dtype=float)
+    for rb in range(num_configs):
+        initial_belief[encode(0, 0, rb)] = 1.0 / num_configs
+
+    return FinitePOMDP(
+        state_names=tuple(state_names),
+        action_names=tuple(action_names),
+        observation_names=observation_names,
+        transition=transition,
+        observation=observation,
+        rewards=rewards,
+        initial_belief=initial_belief,
+    )
+
+
+def rocksample_observation_metric() -> np.ndarray:
+    """Discrete 3x3 observation metric for RockSample (good, bad, none)."""
+    d = np.ones((3, 3), dtype=float)
+    np.fill_diagonal(d, 0.0)
+    return d
+
+
+def channel_communication_pomdp(
+    num_symbols: int = 4,
+    num_codewords: int = 4,
+    noise: float = 0.2,
+) -> FinitePOMDP:
+    """Communication channel as a POMDP: Alice encodes, Bob decodes through noise.
+
+    Parameters
+    ----------
+    num_symbols : int
+        Number of source messages (states = Alice's intended message).
+    num_codewords : int
+        Number of encoding choices (actions) and received symbols (observations).
+    noise : float
+        Error probability.  Correct symbol received with prob ``1 - noise``;
+        each incorrect symbol received with prob ``noise / (num_codewords - 1)``.
+
+    The POMDP models single-shot communication: state is the source message,
+    action is the codeword choice, observation is the received symbol.
+    Transition is identity (state does not change).  Reward is zero
+    (abstraction-focused).
+    """
+    states = tuple(f"msg_{i}" for i in range(num_symbols))
+    actions = tuple(f"code_{i}" for i in range(num_codewords))
+    observations = tuple(f"recv_{i}" for i in range(num_codewords))
+
+    num_s, num_a, num_o = num_symbols, num_codewords, num_codewords
+
+    # Identity transition: state unchanged
+    transition = np.zeros((num_s, num_a, num_s), dtype=float)
+    for s in range(num_s):
+        for a in range(num_a):
+            transition[s, a, s] = 1.0
+
+    # BSC-generalisation observation kernel: correct codeword with 1-noise
+    observation = np.zeros((num_s, num_a, num_o), dtype=float)
+    noise_per_other = noise / max(num_o - 1, 1) if num_o > 1 else 0.0
+    for s in range(num_s):
+        for a in range(num_a):
+            for o in range(num_o):
+                if o == a:
+                    observation[s, a, o] = 1.0 - noise
+                else:
+                    observation[s, a, o] = noise_per_other
+
+    rewards = np.zeros((num_s, num_a), dtype=float)
+    b0 = np.full(num_s, 1.0 / num_s, dtype=float)
+
+    return FinitePOMDP(
+        state_names=states,
+        action_names=actions,
+        observation_names=observations,
+        transition=transition,
+        observation=observation,
+        rewards=rewards,
+        initial_belief=b0,
+    )
+
+
+def channel_obs_metric(num_codewords: int) -> np.ndarray:
+    """Hamming distance matrix on channel output symbols."""
+    d = np.ones((num_codewords, num_codewords), dtype=float)
+    np.fill_diagonal(d, 0.0)
+    return d
 
 
 def stochastic_coarsen_observations(

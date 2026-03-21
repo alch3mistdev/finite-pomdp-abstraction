@@ -1,0 +1,4 @@
+trajectories,coverage_percent,mean_ci_width
+100,97.0,0.199
+250,96.5,0.127
+500,96.0,0.090

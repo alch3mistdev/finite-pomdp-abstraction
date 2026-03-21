@@ -1,0 +1,2 @@
+benchmark,horizon,m,op_classes,clk_classes,num_clk_policies,num_op_policies,ari,max_gap
+Tiger,2,2,4,4,1296,147,1.0,0.0

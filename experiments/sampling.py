@@ -99,6 +99,39 @@ def empirical_wasserstein_distance(
     return wasserstein_distance(dist_p, dist_q, d_obs=d_obs)
 
 
+def bootstrap_w1_ci(
+    samples_h1: List[ObsSeq],
+    samples_h2: List[ObsSeq],
+    d_obs: np.ndarray,
+    n_bootstrap: int = 1000,
+    alpha: float = 0.05,
+    rng: np.random.Generator | None = None,
+) -> Tuple[float, float, float]:
+    """Bootstrap 95% confidence interval for empirical W1 distance.
+
+    Returns (point_estimate, ci_lo, ci_hi).
+    """
+    if rng is None:
+        rng = np.random.default_rng(42)
+
+    point = empirical_wasserstein_distance(samples_h1, samples_h2, d_obs)
+    n1, n2 = len(samples_h1), len(samples_h2)
+
+    boot_dists: List[float] = []
+    for _ in range(n_bootstrap):
+        idx1 = rng.integers(0, n1, size=n1)
+        idx2 = rng.integers(0, n2, size=n2)
+        resampled_h1 = [samples_h1[i] for i in idx1]
+        resampled_h2 = [samples_h2[i] for i in idx2]
+        boot_dists.append(
+            empirical_wasserstein_distance(resampled_h1, resampled_h2, d_obs)
+        )
+
+    lo = float(np.percentile(boot_dists, 100 * alpha / 2))
+    hi = float(np.percentile(boot_dists, 100 * (1 - alpha / 2)))
+    return point, lo, hi
+
+
 def sampling_based_distance_cache(
     pomdp: FinitePOMDP,
     policies: Sequence[DeterministicFSC],
@@ -106,8 +139,13 @@ def sampling_based_distance_cache(
     d_obs: np.ndarray,
     num_samples: int = 500,
     seed: int = 42,
-) -> DistanceCache:
-    """Build a DistanceCache using sampling-based W1 estimation."""
+    return_samples: bool = False,
+) -> "DistanceCache | Tuple[DistanceCache, List[Dict[History, List[ObsSeq]]]]":
+    """Build a DistanceCache using sampling-based W1 estimation.
+
+    If *return_samples* is True, also returns the raw trajectory samples
+    (one dict per policy mapping histories to sample lists).
+    """
     rng = np.random.default_rng(seed)
     histories_by_depth = all_histories(
         num_observations=pomdp.num_observations, horizon=horizon
@@ -142,10 +180,64 @@ def sampling_based_distance_cache(
                 matrix[j, i] = dmax
         max_distance_matrices[depth] = matrix
 
-    return DistanceCache(
+    cache = DistanceCache(
         horizon=horizon,
         histories_by_depth=histories_by_depth,
         max_distance_matrices=max_distance_matrices,
+    )
+    if return_samples:
+        return cache, samples
+    return cache
+
+
+def max_pairwise_w1_bootstrap_ci(
+    samples: List[Dict[History, List[ObsSeq]]],
+    cache: DistanceCache,
+    d_obs: np.ndarray,
+    n_bootstrap: int = 1000,
+    alpha: float = 0.05,
+    seed: int = 42,
+) -> Tuple[float, float, float]:
+    """Bootstrap 95% CI on the max pairwise W1 distance in the cache.
+
+    Finds the (history pair, policy) that achieves the max distance, then
+    bootstraps that pair to get a confidence interval.
+
+    Returns (point_estimate, ci_lo, ci_hi).
+    """
+    # Find the max-distance entry
+    best_w1 = 0.0
+    best_pair: Tuple[History, History] | None = None
+    best_pi: int = 0
+    for depth, histories in cache.histories_by_depth.items():
+        mat = cache.max_distance_matrices[depth]
+        n = len(histories)
+        for i in range(n):
+            for j in range(i + 1, n):
+                if mat[i, j] > best_w1:
+                    best_w1 = mat[i, j]
+                    best_pair = (histories[i], histories[j])
+                    # Find which policy achieves this max
+                    for pi_idx in range(len(samples)):
+                        d = empirical_wasserstein_distance(
+                            samples[pi_idx][histories[i]],
+                            samples[pi_idx][histories[j]],
+                            d_obs,
+                        )
+                        if abs(d - mat[i, j]) < 1e-12:
+                            best_pi = pi_idx
+                            break
+
+    if best_pair is None:
+        return 0.0, 0.0, 0.0
+
+    return bootstrap_w1_ci(
+        samples[best_pi][best_pair[0]],
+        samples[best_pi][best_pair[1]],
+        d_obs,
+        n_bootstrap=n_bootstrap,
+        alpha=alpha,
+        rng=np.random.default_rng(seed),
     )
 
 

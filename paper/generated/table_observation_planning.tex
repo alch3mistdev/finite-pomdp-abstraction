@@ -1,0 +1,20 @@
+\begin{tabular}{llrrrrrp{3.2cm}rrr}
+\toprule
+Benchmark & Obj. & $T$ & Hist. & Cls. & $t_{\mathrm{orig}}$ & $t_{Q^{\mathrm{clk}}}$ & Policy & $V_{\mathrm{orig}}$ & $V_{Q^{\mathrm{clk}}}$ & Regret\\
+\midrule
+Tiger & Obs score & 2 & 7 & 4 & 0.000 & 0.000 & L L & 1.000 & 1.000 & 0.000\\
+Tiger & Action+obs score & 2 & 7 & 4 & 0.000 & 0.000 & OL OL & 1.000 & 1.000 & 0.000\\
+Tiger & Obs score & 4 & 31 & 16 & 0.001 & 0.003 & L L L L & 2.000 & 2.000 & 0.000\\
+Tiger & Action+obs score & 4 & 31 & 16 & 0.001 & 0.003 & OL OL OL OL & 2.000 & 2.000 & 0.000\\
+Tiger & Obs score & 6 & 127 & 64 & 0.008 & 0.132 & L L L L L L & 3.000 & 3.000 & 0.000\\
+Tiger & Action+obs score & 6 & 127 & 64 & 0.008 & 0.133 & OL OL OL OL OL OL & 3.000 & 3.000 & 0.000\\
+Tiger & Obs score & 8 & 511 & 256 & 0.099 & 10.159 & L L L L L OL L L & 4.000 & 4.000 & 0.000\\
+Tiger & Action+obs score & 8 & 511 & 256 & 0.104 & 10.122 & OL OL OL OL OL OL OL OL & 4.000 & 4.000 & 0.000\\
+Tiger & Obs score & 10 & 2047 & 1024 & 1.119 & 1348.444 & L L L L L L L L L L & 5.000 & 5.000 & 0.000\\
+Tiger & Action+obs score & 10 & 2047 & 1024 & 1.136 & 1328.328 & OL OL OL OL OL OL OL OL OL OL & 5.000 & 5.000 & 0.000\\
+GridWorld 3x3 & Obs score & 2 & 21 & 6 & 0.000 & 0.000 & D D & 1.120 & 1.120 & 0.000\\
+GridWorld 3x3 & Action+obs score & 2 & 21 & 6 & 0.000 & 0.000 & U U & 0.968 & 0.968 & 0.000\\
+GridWorld 3x3 & Obs score & 3 & 85 & 22 & 0.006 & 0.008 & D D R & 1.787 & 1.787 & 0.000\\
+GridWorld 3x3 & Action+obs score & 3 & 85 & 22 & 0.006 & 0.008 & L U U & 1.562 & 1.562 & 0.000\\
+\bottomrule
+\end{tabular}

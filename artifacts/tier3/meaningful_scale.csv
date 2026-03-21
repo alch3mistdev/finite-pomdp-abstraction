@@ -1,0 +1,4 @@
+track,benchmark,state_count,observation_count,horizon,method,epsilon_0_classes,epsilon_03_classes,runtime_seconds_reported,ci_lo,ci_hi
+Scale-up,Net. Mon. (n=12),4096,3,2,Sampling,13,5,~5,0.31,0.43
+Large O,Random,2000,10,2,Sampling,111,10,~30,0.10,0.20
+Long T,Net. Mon. (n=10),1024,3,20,Layered,13,5,~25,0.67,0.84
