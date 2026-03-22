@@ -118,6 +118,7 @@ def _benchmark_bundle(name: str, pomdp: FinitePOMDP, horizon: int, d_obs: np.nda
 def build_exact_bundles(
     tiger_horizons: Sequence[int] = (2, 4, 6, 8, 10),
     gridworld_horizons: Sequence[int] = (2, 3),
+    gridworld5x5_horizons: Sequence[int] = (2,),
     include_witness: bool = True,
 ) -> List[Dict[str, object]]:
     bundles: List[Dict[str, object]] = []
@@ -126,6 +127,10 @@ def build_exact_bundles(
     for horizon in gridworld_horizons:
         bundles.append(
             _benchmark_bundle("GridWorld 3x3", gridworld_pomdp(size=3), horizon, gridworld_geometric_observation_metric())
+        )
+    for horizon in gridworld5x5_horizons:
+        bundles.append(
+            _benchmark_bundle("GridWorld 5x5", gridworld_pomdp(size=5), horizon, gridworld_geometric_observation_metric())
         )
     if include_witness:
         bundles.append(
@@ -142,11 +147,13 @@ def build_exact_bundles(
 def run_probe_family_comparison(
     tiger_horizons: Sequence[int] = (2, 4, 6, 8, 10),
     gridworld_horizons: Sequence[int] = (2, 3),
+    gridworld5x5_horizons: Sequence[int] = (2,),
     include_witness: bool = True,
 ) -> pd.DataFrame:
     bundles = build_exact_bundles(
         tiger_horizons=tiger_horizons,
         gridworld_horizons=gridworld_horizons,
+        gridworld5x5_horizons=gridworld5x5_horizons,
         include_witness=include_witness,
     )
     return run_probe_family_comparison_from_bundles(bundles)
