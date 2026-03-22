@@ -2,7 +2,7 @@
 
 Companion code for the paper:
 
-> **Finite-POMDP Abstraction via Agent-Bounded Indistinguishability: A Bounded-Interaction Myhill-Nerode Theorem**
+> **The Myhill–Nerode Theorem for Bounded Interaction: Canonical Abstractions via Agent-Bounded Indistinguishability**
 >
 > Anthony T Nixon
 >
@@ -216,8 +216,8 @@ If you use this software, please cite it as described in [CITATION.cff](CITATION
 
 ```bibtex
 @article{nixon2026finite,
-  title={Finite-{POMDP} Abstraction via Agent-Bounded Indistinguishability:
-         A Bounded-Interaction {M}yhill--{N}erode Theorem},
+  title={The {M}yhill--{N}erode Theorem for Bounded Interaction:
+         Canonical Abstractions via Agent-Bounded Indistinguishability},
   author={Nixon, Anthony},
   journal={arXiv preprint arXiv:XXXX.XXXXX},
   year={2026}
