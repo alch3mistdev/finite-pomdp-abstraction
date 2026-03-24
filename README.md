@@ -6,7 +6,7 @@ Companion code for the paper:
 >
 > Anthony T Nixon
 >
-**Paper:** [arXiv:2603.21399](https://arxiv.org/abs/2603.21399) | [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19203398.svg)](https://doi.org/10.5281/zenodo.19203398)
+**Paper:** [![arXiv](https://img.shields.io/badge/arXiv-2603.21399-b31b1b.svg)](https://arxiv.org/abs/2603.21399) | [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19203398.svg)](https://doi.org/10.5281/zenodo.19203398)
 
 ## Overview
 
