@@ -6,7 +6,7 @@ Companion code for the paper:
 >
 > Anthony T Nixon
 >
->[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18904640.svg)](https://doi.org/10.5281/zenodo.18904640)
+**Paper:** [arXiv:2603.21399](https://arxiv.org/abs/2603.21399) | [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19203398.svg)](https://doi.org/10.5281/zenodo.19203398)
 
 ## Overview
 
@@ -215,12 +215,15 @@ The `main` branch always tracks the latest release.
 If you use this software, please cite it as described in [CITATION.cff](CITATION.cff).
 
 ```bibtex
-@article{nixon2026finite,
+@article{nixon2026myhillnerode,
   title={The {M}yhill--{N}erode Theorem for Bounded Interaction:
          Canonical Abstractions via Agent-Bounded Indistinguishability},
-  author={Nixon, Anthony},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2026}
+  author={Nixon, Anthony T.},
+  journal={arXiv preprint arXiv:2603.21399},
+  year={2026},
+  eprint={2603.21399},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI}
 }
 ```
 

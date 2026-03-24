@@ -27,10 +27,20 @@ date-released: "2026-03-18"
 
 preferred-citation:
   type: article
-  title: "The Myhill--Nerode Theorem for Bounded Interaction: Canonical Abstractions via Agent-Bounded Indistinguishability"
+  title: "The Myhill–Nerode Theorem for Bounded Interaction: Canonical Abstractions via Agent-Bounded Indistinguishability"
   authors:
     - family-names: "Nixon"
       given-names: "Anthony T"
       orcid: "https://orcid.org/0000-0002-0289-0954"
   year: 2026
-  url: "https://github.com/alch3mistdev/pomdp-quotient"
+  url: "https://arxiv.org/abs/2603.21399"
+  identifiers:
+    - type: url
+      value: "https://arxiv.org/abs/2603.21399"
+      description: "arXiv preprint"
+    - type: doi
+      value: "10.5281/zenodo.18904639"
+      description: "Zenodo (concept DOI, all versions)"
+    - type: doi
+      value: "10.5281/zenodo.19203398"
+      description: "Zenodo (v0.1.1)"
