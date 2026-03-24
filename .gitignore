@@ -15,5 +15,8 @@ venv/
 ## OS
 .DS_Store
 
+*.md
+!README.md
+
 ## Generated results (reproduce with run_basic_results.py)
 experiments/results/
